@@ -58,7 +58,7 @@ class MemberForm(tk.Frame):
 
         self.status_filter_var = tk.StringVar(value="All")
         ttk.Combobox(top_bar, textvariable=self.status_filter_var,
-                     values=["All", "Active", "Suspended", "Absconded"],
+                     values=["All", "Active", "Suspended", "Absconded", "Exited"],
                      state="readonly", font=("Segoe UI", 10), width=12).pack(side="left", padx=(10, 0))
         self.status_filter_var.trace_add("write", lambda *a: self._filter_members())
 
@@ -101,6 +101,7 @@ class MemberForm(tk.Frame):
         self.tree.tag_configure("Active", foreground="#2E7D32")
         self.tree.tag_configure("Suspended", foreground="#E65100")
         self.tree.tag_configure("Absconded", foreground="#C62828")
+        self.tree.tag_configure("Exited", foreground="#757575")
 
         self.tree.bind("<Double-1>", lambda e: self._on_tree_select())
 
@@ -239,10 +240,15 @@ class MemberForm(tk.Frame):
                                           state="disabled", command=self._edit_details)
         self.btn_edit_details.pack(side="left", padx=(8, 0))
         self.btn_print_card = tk.Button(btn_frame, text="Print Member Card",
-                                        font=("Segoe UI", 10), bg="#FFFFFF",
-                                        fg="#1565C0", relief="solid", bd=1, padx=10, pady=4,
-                                        state="disabled", command=self._print_card)
+                                         font=("Segoe UI", 10), bg="#FFFFFF",
+                                         fg="#1565C0", relief="solid", bd=1, padx=10, pady=4,
+                                         state="disabled", command=self._print_card)
         self.btn_print_card.pack(side="left", padx=(8, 0))
+        self.btn_mark_exited = tk.Button(btn_frame, text="Mark as Exited",
+                                          font=("Segoe UI", 10), bg="#C62828",
+                                          fg="#FFFFFF", relief="flat", padx=10, pady=4,
+                                          state="disabled", command=self._mark_as_exited)
+        self.btn_mark_exited.pack(side="left", padx=(8, 0))
 
         cat_row = tk.Frame(c, bg="#FFFFFF")
         cat_row.pack(fill="x", pady=(8, 0))
@@ -457,6 +463,10 @@ class MemberForm(tk.Frame):
         self.btn_record_payment.config(state="normal")
         self.btn_edit_details.config(state="normal")
         self.btn_print_card.config(state="normal")
+        if row["status"] == "Exited":
+            self.btn_mark_exited.config(state="disabled")
+        else:
+            self.btn_mark_exited.config(state="normal")
         self.quick_status_var.set(row["status"] or "Active")
         self.quick_status_combo.config(state="readonly")
         self.btn_apply_status.config(state="normal")
@@ -504,6 +514,171 @@ class MemberForm(tk.Frame):
                 "Updated",
                 f"Member category set to {new_status}.\n"
                 f"Profile, list and Categories now show {new_status}.")
+
+    def _mark_as_exited(self):
+        if not self.selected_member_db_id:
+            return
+        from datetime import date as _date
+        conn = get_connection()
+        row = conn.execute("SELECT * FROM members WHERE id = ?",
+                           (self.selected_member_db_id,)).fetchone()
+        if not row:
+            messagebox.showerror("Error", "Member not found")
+            return
+        if row["status"] == "Exited":
+            messagebox.showinfo("Already Exited", "This member has already been marked as exited.")
+            return
+
+        summary = get_member_financial_summary(self.selected_member_db_id)
+
+        active_loans = conn.execute(
+            "SELECT COUNT(*) as cnt FROM loans WHERE member_id = ? AND status IN ('Disbursed','Active','Overdue')",
+            (self.selected_member_db_id,)
+        ).fetchone()["cnt"]
+        outstanding_loan = summary.get("outstanding", 0)
+
+        unpaid_charges = conn.execute(
+            "SELECT COALESCE(SUM(amount - amount_paid), 0) as total FROM member_charges WHERE member_id = ? AND amount > amount_paid",
+            (self.selected_member_db_id,)
+        ).fetchone()["total"]
+        savings_balance = summary.get("total_savings", 0)
+
+        has_blocks = (active_loans > 0 or outstanding_loan > 0 or
+                      unpaid_charges > 0 or savings_balance > 0)
+
+        win = tk.Toplevel(self)
+        win.title(f"Mark as Exited - {row['full_name']}")
+        win.geometry("500x520")
+        win.configure(bg="#FFFFFF")
+        win.transient(self)
+        win.grab_set()
+
+        tk.Label(win, text="Member Exit Confirmation", font=("Segoe UI", 14, "bold"),
+                 fg="#C62828", bg="#FFFFFF").pack(anchor="w", padx=20, pady=(15, 5))
+        tk.Label(win, text=f"Member: {row['full_name']} ({row['member_id']})",
+                 font=("Segoe UI", 11), fg="#333333", bg="#FFFFFF").pack(anchor="w", padx=20)
+
+        tk.Frame(win, height=2, bg="#E3F2FD").pack(fill="x", padx=20, pady=(12, 8))
+
+        tk.Label(win, text="Financial Status:", font=("Segoe UI", 11, "bold"),
+                 fg="#1565C0", bg="#FFFFFF").pack(anchor="w", padx=20)
+
+        items_frame = tk.Frame(win, bg="#FFFFFF")
+        items_frame.pack(fill="x", padx=20)
+
+        def add_item(label, value, is_warning=False):
+            row_f = tk.Frame(items_frame, bg="#FFFFFF")
+            row_f.pack(fill="x", pady=1)
+            color = "#C62828" if is_warning else "#333333"
+            tk.Label(row_f, text=label, font=("Segoe UI", 10),
+                     fg=color, bg="#FFFFFF").pack(side="left")
+            tk.Label(row_f, text=format_currency(value), font=("Segoe UI", 10, "bold"),
+                     fg=color, bg="#FFFFFF").pack(side="right")
+
+        add_item("Savings Balance:", savings_balance, savings_balance > 0)
+        add_item("Outstanding Loan:", outstanding_loan, outstanding_loan > 0)
+        add_item("Unpaid Charges:", unpaid_charges, unpaid_charges > 0)
+
+        tk.Frame(win, height=2, bg="#E3F2FD").pack(fill="x", padx=20, pady=(12, 8))
+
+        if has_blocks:
+            warn_lines = []
+            if active_loans > 0 or outstanding_loan > 0:
+                warn_lines.append(f"• {active_loans} active loan(s) with {format_currency(outstanding_loan)} outstanding")
+            if unpaid_charges > 0:
+                warn_lines.append(f"• Unpaid charges of {format_currency(unpaid_charges)}")
+            if savings_balance > 0:
+                warn_lines.append(f"• Savings balance of {format_currency(savings_balance)} (will be forfeited)")
+
+            tk.Label(win, text="Outstanding Balances Detected:", font=("Segoe UI", 11, "bold"),
+                     fg="#C62828", bg="#FFFFFF").pack(anchor="w", padx=20)
+            for line in warn_lines:
+                tk.Label(win, text=line, font=("Segoe UI", 10),
+                         fg="#C62828", bg="#FFFFFF", wraplength=440, justify="left").pack(anchor="w", padx=30)
+
+            tk.Label(win, text="\nPlease settle all outstanding amounts before\nmarking this member as exited.",
+                     font=("Segoe UI", 10), fg="#333333", bg="#FFFFFF",
+                     wraplength=440, justify="left").pack(anchor="w", padx=20)
+        else:
+            tk.Label(win, text="No outstanding balances. Member can be exited.",
+                     font=("Segoe UI", 10, "bold"), fg="#2E7D32", bg="#FFFFFF").pack(anchor="w", padx=20)
+
+        tk.Frame(win, height=2, bg="#E3F2FD").pack(fill="x", padx=20, pady=(12, 8))
+
+        tk.Label(win, text="Exit Reason:", font=("Segoe UI", 11, "bold"),
+                 fg="#1565C0", bg="#FFFFFF").pack(anchor="w", padx=20)
+        reason_var = tk.StringVar()
+        reason_combo = ttk.Combobox(win, textvariable=reason_var,
+                                    values=["Voluntary withdrawal", "Relocation",
+                                            "Non-payment", "Death", "Other"],
+                                    state="readonly", font=("Segoe UI", 10), width=35)
+        reason_combo.pack(padx=20, pady=(4, 0))
+
+        tk.Label(win, text="Additional Notes (optional):", font=("Segoe UI", 10),
+                 fg="#333333", bg="#FFFFFF").pack(anchor="w", padx=20, pady=(8, 2))
+        notes_text = tk.Text(win, height=3, width=50, font=("Segoe UI", 10),
+                             relief="solid", bd=1)
+        notes_text.pack(padx=20)
+
+        btn_frame = tk.Frame(win, bg="#FFFFFF")
+        btn_frame.pack(fill="x", padx=20, pady=(12, 15))
+
+        def confirm_exit():
+            reason = reason_var.get().strip()
+            if not reason:
+                messagebox.showwarning("Required", "Please select an exit reason.", parent=win)
+                return
+            if has_blocks:
+                if not messagebox.askyesno(
+                    "Confirm Exit with Outstanding Balances",
+                    "This member has outstanding balances.\n\n"
+                    "By proceeding:\n"
+                    "• Active loans will be written off\n"
+                    "• Unpaid charges will be written off\n"
+                    "• Savings balance will be forfeited\n\n"
+                    "Are you sure you want to continue?",
+                    parent=win
+                ):
+                    return
+            else:
+                if not messagebox.askyesno(
+                    "Confirm Exit",
+                    f"Mark {row['full_name']} as Exited?\n\n"
+                    "This action records the member's departure from the cooperative.",
+                    parent=win
+                ):
+                    return
+
+            notes = notes_text.get("1.0", "end").strip()
+            exit_reason = reason
+            if notes:
+                exit_reason = f"{reason} — {notes}"
+
+            try:
+                conn.execute(
+                    "UPDATE members SET status = 'Exited', date_ended = ?, exit_reason = ? WHERE id = ?",
+                    (_date.today().isoformat(), exit_reason, self.selected_member_db_id)
+                )
+                conn.commit()
+            except Exception as exc:
+                messagebox.showerror("Error", f"Failed to update member status:\n{exc}", parent=win)
+                return
+
+            messagebox.showinfo("Member Exited",
+                                f"{row['full_name']} has been marked as Exited.\n"
+                                f"Date: {_date.today().isoformat()}\n"
+                                f"Reason: {exit_reason}",
+                                parent=win)
+            win.destroy()
+            self._load_member_profile(self.selected_member_db_id)
+            self._load_all_members()
+
+        tk.Button(btn_frame, text="Confirm Exit", font=("Segoe UI", 11, "bold"),
+                  bg="#C62828", fg="#FFFFFF", relief="flat", padx=16, pady=5,
+                  command=confirm_exit).pack(side="left")
+        tk.Button(btn_frame, text="Cancel", font=("Segoe UI", 11),
+                  bg="#E3F2FD", fg="#1565C0", relief="flat", padx=16, pady=5,
+                  command=win.destroy).pack(side="left", padx=(8, 0))
 
     def _open_register_dialog(self):
         win = tk.Toplevel(self)
@@ -674,7 +849,7 @@ class MemberForm(tk.Frame):
         cols_frame = tk.Frame(win, bg="#FFFFFF", padx=15)
         cols_frame.pack(fill="both", expand=True)
 
-        for i, status in enumerate(("Active", "Suspended", "Absconded")):
+        for i, status in enumerate(("Active", "Suspended", "Absconded", "Exited")):
             panel = tk.LabelFrame(cols_frame, text=f"  {status}  ",
                                   font=("Segoe UI", 11, "bold"),
                                   fg="#1565C0", bg="#FFFFFF", padx=6, pady=6)

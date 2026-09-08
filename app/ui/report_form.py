@@ -486,54 +486,51 @@ class ReportForm(tk.Frame):
 
     def _report_withdrawn_members(self):
         date_from, date_to = self._get_date_range()
-        columns = ("member_id", "name", "status", "withdrawn", "savings",
-                   "shares", "loan_out", "owed", "joined")
+        columns = ("member_id", "name", "status", "exited", "reason",
+                   "savings", "shares", "loan_out", "owed", "joined")
         headings = {"member_id": "Member ID", "name": "Name", "status": "Category",
-                    "withdrawn": "Total Withdrawn", "savings": "Savings Balance",
-                    "shares": "Shares Value", "loan_out": "Loan Outstanding",
-                    "owed": "Charges Owed", "joined": "Date Joined"}
+                    "exited": "Date Exited", "reason": "Exit Reason",
+                    "savings": "Savings Balance", "shares": "Shares Value",
+                    "loan_out": "Loan Outstanding", "owed": "Charges Owed",
+                    "joined": "Date Joined"}
         self._configure_tree(columns, headings)
 
         conn = get_connection()
-        sql = """SELECT m.id, m.member_id, m.full_name, m.status, m.date_joined,
-                        COALESCE((SELECT SUM(t.amount) FROM transactions t
-                                  WHERE t.member_id = m.id
-                                    AND t.transaction_type = 'Withdrawal'
-                                    AND t.status = 'Posted'), 0) AS withdrawn
+        sql = """SELECT m.id, m.member_id, m.full_name, m.status,
+                        m.date_ended, m.exit_reason, m.date_joined
                  FROM members m
-                 WHERE EXISTS (SELECT 1 FROM transactions t
-                               WHERE t.member_id = m.id
-                                 AND t.transaction_type = 'Withdrawal'
-                                 AND t.status = 'Posted')"""
+                 WHERE m.status = 'Exited'"""
         params = []
         if date_from:
-            sql += " AND m.date_joined >= ?"
+            sql += " AND m.date_ended >= ?"
             params.append(date_from)
         if date_to:
-            sql += " AND m.date_joined <= ?"
+            sql += " AND m.date_ended <= ?"
             params.append(date_to)
-        sql += " ORDER BY m.full_name"
+        sql += " ORDER BY m.date_ended ASC, m.full_name"
         rows = conn.execute(sql, params).fetchall()
 
-        t_wd = t_sav = t_shr = t_out = t_owed = 0
+        t_sav = t_shr = t_out = t_owed = 0
         for row in rows:
             s = get_member_financial_summary(row["id"])
             owed = s.get("total_owed", 0)
-            t_wd += row["withdrawn"] or 0
             t_sav += s["total_savings"]
             t_shr += s["total_shares"]
             t_out += s["outstanding"]
             t_owed += owed
+            reason = row["exit_reason"] or "—"
+            if len(reason) > 45:
+                reason = reason[:45] + "…"
             self.tree.insert("", "end", values=(
                 row["member_id"], row["full_name"], row["status"],
-                format_currency(row["withdrawn"]),
+                row["date_ended"] or "—", reason,
                 format_currency(s["total_savings"]),
                 format_currency(s["total_shares"]),
                 format_currency(s["outstanding"]),
                 format_currency(owed), row["date_joined"] or "—"))
         if rows:
             self.tree.insert("", "end", values=(
-                f"TOTAL ({len(rows)})", "", "", format_currency(t_wd),
+                f"TOTAL ({len(rows)})", "", "", "", "",
                 format_currency(t_sav), format_currency(t_shr),
                 format_currency(t_out), format_currency(t_owed), ""))
 
