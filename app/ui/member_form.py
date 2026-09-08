@@ -548,7 +548,7 @@ class MemberForm(tk.Frame):
 
         win = tk.Toplevel(self)
         win.title(f"Mark as Exited - {row['full_name']}")
-        win.geometry("500x520")
+        win.geometry("500x620")
         win.configure(bg="#FFFFFF")
         win.transient(self)
         win.grab_set()
@@ -616,7 +616,7 @@ class MemberForm(tk.Frame):
 
         tk.Label(win, text="Additional Notes (optional):", font=("Segoe UI", 10),
                  fg="#333333", bg="#FFFFFF").pack(anchor="w", padx=20, pady=(8, 2))
-        notes_text = tk.Text(win, height=3, width=50, font=("Segoe UI", 10),
+        notes_text = tk.Text(win, height=2, width=50, font=("Segoe UI", 10),
                              relief="solid", bd=1)
         notes_text.pack(padx=20)
 
