@@ -6,8 +6,10 @@ import shutil
 from database.connection import get_connection, DB_DIR
 from database.schema import get_setting
 from engines.transaction_engine import (
-    register_member, get_member_financial_summary, record_savings, record_repayment
+    register_member, get_member_financial_summary, get_member_passbook,
+    record_savings, record_repayment
 )
+from constants import PASSBOOK_FEE_COLUMNS
 from utils.validators import validate_required, validate_amount, validate_name
 from utils.helpers import format_currency, PaginationHelper
 from errors import handle_error, safe_execute, ValidationError
@@ -267,22 +269,80 @@ class MemberForm(tk.Frame):
         self.btn_apply_status.pack(side="left", padx=(6, 0))
 
         tk.Frame(c, height=2, bg="#E3F2FD").pack(fill="x", pady=(12, 8))
+
+        info_frame = tk.Frame(c, bg="#E3F2FD", padx=12, pady=8)
+        info_frame.pack(fill="x", pady=(0, 8))
+        self.passbook_info_labels = {}
+
+        info_row1 = tk.Frame(info_frame, bg="#E3F2FD")
+        info_row1.pack(fill="x", pady=(0, 4))
+        for key, label in [("savings", "Savings"), ("shares", "Shares"),
+                           ("active_loan", "Active Loan"), ("outstanding", "Outstanding")]:
+            f = tk.Frame(info_row1, bg="#E3F2FD")
+            f.pack(side="left", padx=(0, 18))
+            tk.Label(f, text=f"{label}:", font=("Segoe UI", 9, "bold"),
+                     fg="#1565C0", bg="#E3F2FD").pack(side="left")
+            val = tk.Label(f, text="--", font=("Segoe UI", 9, "bold"),
+                           fg="#333333", bg="#E3F2FD")
+            val.pack(side="left", padx=(4, 0))
+            self.passbook_info_labels[key] = val
+
+        info_row2 = tk.Frame(info_frame, bg="#E3F2FD")
+        info_row2.pack(fill="x")
+        for key, label in [("minutes_owed", "Minutes"), ("ict_owed", "ICT"),
+                           ("agm_owed", "AGM"), ("lateness_owed", "Lateness"),
+                           ("absentism_owed", "Absentism"), ("fines_owed", "Fines")]:
+            f = tk.Frame(info_row2, bg="#E3F2FD")
+            f.pack(side="left", padx=(0, 14))
+            tk.Label(f, text=f"{label}:", font=("Segoe UI", 9, "bold"),
+                     fg="#1565C0", bg="#E3F2FD").pack(side="left")
+            val = tk.Label(f, text="--", font=("Segoe UI", 9),
+                           fg="#333333", bg="#E3F2FD")
+            val.pack(side="left", padx=(4, 0))
+            self.passbook_info_labels[key] = val
+
         tk.Label(c, text="Passbook", font=("Segoe UI", 13, "bold"),
-                 fg="#1565C0", bg="#FFFFFF").pack(anchor="w", pady=(0, 6))
+                 fg="#1565C0", bg="#FFFFFF").pack(anchor="w", pady=(8, 4))
         book_frame = tk.Frame(c, bg="#FFFFFF")
         book_frame.pack(fill="both", expand=True)
-        book_cols = ("date", "savings", "repay", "minutes",
-                     "collected", "fines", "outstanding", "other", "method", "desc")
-        self.book_tree = ttk.Treeview(book_frame, columns=book_cols,
-                                      show="headings", height=8)
-        for col, txt, w in [("date", "Date", 90), ("savings", "Savings", 90),
-                            ("repay", "Loan Repay", 90),
-                            ("minutes", "Minutes", 80), ("collected", "Loan Coll.", 90),
-                            ("fines", "Fines", 80), ("outstanding", "Loan Outst.", 95),
-                            ("other", "Other", 90), ("method", "Method", 95),
-                            ("desc", "Details", 160)]:
+
+        self._passbook_cols = ["date", "savings", "loan_repayment"]
+        for col_key, label, _ctype in PASSBOOK_FEE_COLUMNS:
+            self._passbook_cols.append(col_key)
+        self._passbook_cols.extend(["loan_collected", "outstanding", "other", "method", "desc"])
+
+        self.book_tree = ttk.Treeview(book_frame, columns=self._passbook_cols,
+                                      show="headings", height=10)
+        col_widths = {"date": 85, "savings": 90, "loan_repayment": 90,
+                      "loan_collected": 90, "outstanding": 95, "other": 80,
+                      "method": 85, "desc": 130}
+        for col_key, _label, _ctype in PASSBOOK_FEE_COLUMNS:
+            col_widths[col_key] = 80
+
+        for col in self._passbook_cols:
+            if col == "date":
+                txt = "Date"
+            elif col == "savings":
+                txt = "Savings"
+            elif col == "loan_repayment":
+                txt = "Loan Repay"
+            elif col == "loan_collected":
+                txt = "Loan Coll."
+            elif col == "outstanding":
+                txt = "Loan Outst."
+            elif col == "other":
+                txt = "Other"
+            elif col == "method":
+                txt = "Method"
+            elif col == "desc":
+                txt = "Details"
+            else:
+                txt = {k: v for k, v, _ in PASSBOOK_FEE_COLUMNS}.get(col, col).title()
+            w = col_widths.get(col, 80)
             self.book_tree.heading(col, text=txt)
-            self.book_tree.column(col, width=w, anchor="center" if col != "desc" else "w")
+            self.book_tree.column(col, width=w,
+                                  anchor="center" if col not in ("date", "desc") else "w")
+
         book_scroll = ttk.Scrollbar(book_frame, orient="vertical",
                                     command=self.book_tree.yview)
         self.book_tree.configure(yscrollcommand=book_scroll.set)
@@ -307,26 +367,75 @@ class MemberForm(tk.Frame):
     def _load_passbook(self, db_id: int):
         for item in self.book_tree.get_children():
             self.book_tree.delete(item)
-        from engines.transaction_engine import get_member_passbook
+
+        summary = get_member_financial_summary(db_id)
+        self.passbook_info_labels["savings"].config(text=format_currency(summary["total_savings"]))
+        self.passbook_info_labels["shares"].config(text=format_currency(summary["total_shares"]))
+        self.passbook_info_labels["active_loan"].config(text=format_currency(summary["active_loan"]))
+        self.passbook_info_labels["outstanding"].config(text=format_currency(summary["outstanding"]))
+
         try:
             rows = get_member_passbook(db_id)
         except Exception:
             rows = []
+
+        fee_totals = {col_key: 0 for col_key, _, _ in PASSBOOK_FEE_COLUMNS}
+        total_savings = 0
+        total_loan_repay = 0
+        total_loan_collected = 0
+        total_other = 0
+        last_outstanding = 0
+
         for r in rows:
-            self.book_tree.insert("", "end", values=(
-                r["date"],
-                format_currency(r["savings"]) if r["savings"] else "--",
-                format_currency(r["loan_repayment"]) if r["loan_repayment"] else "--",
-                format_currency(r["minutes"]) if r["minutes"] else "--",
+            total_savings += r.get("savings", 0) or 0
+            total_loan_repay += r.get("loan_repayment", 0) or 0
+            total_loan_collected += r.get("loan_collected", 0) or 0
+            total_other += r.get("other", 0) or 0
+            if r.get("loan_outstanding", "") != "":
+                last_outstanding = r["loan_outstanding"] or 0
+            for col_key, _, _ in PASSBOOK_FEE_COLUMNS:
+                fee_totals[col_key] += r.get(col_key, 0) or 0
+
+            vals = [r["date"],
+                    format_currency(r["savings"]) if r["savings"] else "--",
+                    format_currency(r["loan_repayment"]) if r["loan_repayment"] else "--"]
+            for col_key, _label, _ctype in PASSBOOK_FEE_COLUMNS:
+                v = r.get(col_key, 0)
+                vals.append(format_currency(v) if v else "--")
+            vals.extend([
                 format_currency(r["loan_collected"]) if r["loan_collected"] else "--",
-                format_currency(r["fines"]) if r["fines"] else "--",
                 format_currency(r["loan_outstanding"]) if r["loan_outstanding"] != "" else "--",
                 format_currency(r["other"]) if r["other"] else "--",
                 r.get("method") or "--",
-                (r["description"] or "")[:40],
-            ))
-        if not rows:
-            self.book_tree.insert("", "end", values=("--",) * 9 + ("No entries yet",))
+                (r["description"] or "")[:30],
+            ])
+            self.book_tree.insert("", "end", values=vals)
+
+        self.passbook_info_labels["minutes_owed"].config(text=format_currency(fee_totals.get("minutes", 0)))
+        self.passbook_info_labels["ict_owed"].config(text=format_currency(fee_totals.get("ict", 0)))
+        self.passbook_info_labels["agm_owed"].config(text=format_currency(fee_totals.get("agm", 0)))
+        self.passbook_info_labels["lateness_owed"].config(text=format_currency(fee_totals.get("lateness", 0)))
+        self.passbook_info_labels["absentism_owed"].config(text=format_currency(fee_totals.get("absentism", 0)))
+        self.passbook_info_labels["fines_owed"].config(text=format_currency(fee_totals.get("fines", 0)))
+
+        if rows:
+            totals_vals = ["TOTALS",
+                           format_currency(total_savings) if total_savings else "--",
+                           format_currency(total_loan_repay) if total_loan_repay else "--"]
+            for col_key, _, _ in PASSBOOK_FEE_COLUMNS:
+                v = fee_totals[col_key]
+                totals_vals.append(format_currency(v) if v else "--")
+            totals_vals.extend([
+                format_currency(total_loan_collected) if total_loan_collected else "--",
+                format_currency(last_outstanding) if last_outstanding else "--",
+                format_currency(total_other) if total_other else "--",
+                "", "",
+            ])
+            self.book_tree.insert("", "end", values=totals_vals, tags=("totals",))
+            self.book_tree.tag_configure("totals", font=("Segoe UI", 10, "bold"),
+                                         background="#E8F5E9")
+        else:
+            self.book_tree.insert("", "end", values=("--",) * len(self._passbook_cols))
 
     def _load_all_members(self):
         self._pagination = PaginationHelper(page_size=50)
