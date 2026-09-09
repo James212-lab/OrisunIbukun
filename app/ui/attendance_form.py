@@ -35,115 +35,147 @@ class AttendanceForm(tk.Frame):
         tk.Label(header, text="MEETING ATTENDANCE", font=("Segoe UI", 18, "bold"),
                  fg="white", bg="#1565C0").pack(side="left", padx=20, pady=8)
 
-        nav = tk.Frame(self, bg="#E3F2FD")
-        nav.pack(fill="x", padx=15, pady=(10, 5))
+        main = tk.Frame(self, bg="#FFFFFF")
+        main.pack(fill="both", expand=True, padx=10, pady=(8, 0))
 
-        self.prev_btn = tk.Button(nav, text="<", font=("Segoe UI", 12, "bold"),
+        left = tk.Frame(main, bg="#E3F2FD", width=220)
+        left.pack(side="left", fill="y", padx=(0, 8))
+        left.pack_propagate(False)
+
+        nav_row = tk.Frame(left, bg="#E3F2FD")
+        nav_row.pack(fill="x", padx=8, pady=(8, 4))
+        self.prev_btn = tk.Button(nav_row, text="<", font=("Segoe UI", 11, "bold"),
                                   bg="#1565C0", fg="white", relief="flat",
-                                  padx=10, pady=2, command=lambda: self._step_month(-1))
+                                  padx=6, pady=1, command=lambda: self._step_month(-1))
         self.prev_btn.pack(side="left")
-
-        self.month_label = tk.Label(nav, text="", font=("Segoe UI", 14, "bold"),
+        self.month_label = tk.Label(nav_row, text="", font=("Segoe UI", 11, "bold"),
                                     fg="#1565C0", bg="#E3F2FD")
-        self.month_label.pack(side="left", padx=12)
-
-        self.next_btn = tk.Button(nav, text=">", font=("Segoe UI", 12, "bold"),
+        self.month_label.pack(side="left", padx=4)
+        self.next_btn = tk.Button(nav_row, text=">", font=("Segoe UI", 11, "bold"),
                                   bg="#1565C0", fg="white", relief="flat",
-                                  padx=10, pady=2, command=lambda: self._step_month(1))
+                                  padx=6, pady=1, command=lambda: self._step_month(1))
         self.next_btn.pack(side="left")
 
-        tk.Button(nav, text="Today", font=("Segoe UI", 10), bg="#1565C0", fg="white",
-                  relief="flat", padx=8, pady=2,
-                  command=self._go_today).pack(side="left", padx=(15, 0))
+        tk.Button(nav_row, text="Today", font=("Segoe UI", 9), bg="#1565C0", fg="white",
+                  relief="flat", padx=6, pady=1,
+                  command=self._go_today).pack(side="left", padx=(6, 0))
 
-        tk.Button(nav, text="Print Attendance", font=("Segoe UI", 9),
-                  bg="#0D47A1", fg="white", relief="flat", padx=8, pady=2,
-                  command=self._print_attendance_sheet).pack(side="left", padx=(8, 0))
-        tk.Button(nav, text="Print Minutes", font=("Segoe UI", 9),
-                  bg="#0D47A1", fg="white", relief="flat", padx=8, pady=2,
-                  command=self._print_meeting_minutes).pack(side="left", padx=(4, 0))
-        tk.Button(nav, text="Print Summary", font=("Segoe UI", 9),
-                  bg="#0D47A1", fg="white", relief="flat", padx=8, pady=2,
-                  command=self._print_monthly_summary).pack(side="left", padx=(4, 0))
+        tk.Frame(left, bg="#90CAF9", height=1).pack(fill="x", padx=8, pady=(4, 6))
 
-        self.new_meeting_btn = tk.Button(nav, text="+ New Meeting", font=("Segoe UI", 10, "bold"),
-                                          bg="#2E7D32", fg="white", relief="flat",
-                                          padx=12, pady=3,
-                                          command=self._start_new_meeting)
-        self.new_meeting_btn.pack(side="right")
+        tk.Label(left, text="MEETINGS", font=("Segoe UI", 9, "bold"),
+                 fg="#1565C0", bg="#E3F2FD").pack(anchor="w", padx=10)
 
-        self.delete_meeting_btn = tk.Button(nav, text="Delete Meeting", font=("Segoe UI", 10, "bold"),
-                                            bg="#C62828", fg="white", relief="flat",
-                                            padx=12, pady=3,
-                                            command=self._delete_meeting)
-        self.delete_meeting_btn.pack(side="right", padx=(0, 8))
+        list_frame = tk.Frame(left, bg="#E3F2FD")
+        list_frame.pack(fill="both", expand=True, padx=8, pady=(4, 0))
 
-        self.summary_label = tk.Label(nav, text="", font=("Segoe UI", 10),
-                                      fg="#333333", bg="#E3F2FD")
-        self.summary_label.pack(side="right", padx=(0, 15))
+        self.meeting_listbox = tk.Listbox(list_frame, font=("Segoe UI", 10),
+                                          selectbackground="#1565C0",
+                                          selectforeground="white",
+                                          activestyle="none",
+                                          relief="solid", bd=1,
+                                          highlightthickness=0)
+        self.meeting_listbox.pack(side="left", fill="both", expand=True)
+        self.meeting_listbox.bind("<<ListboxSelect>>", self._on_meeting_select)
 
-        tk.Frame(self, bg="#1565C0", height=1).pack(fill="x", padx=15)
+        list_scroll = ttk.Scrollbar(list_frame, orient="vertical",
+                                    command=self.meeting_listbox.yview)
+        self.meeting_listbox.configure(yscrollcommand=list_scroll.set)
+        list_scroll.pack(side="right", fill="y")
 
-        grid_frame = tk.Frame(self, bg="#FFFFFF")
-        grid_frame.pack(fill="both", expand=True, padx=15, pady=(5, 0))
+        btn_row = tk.Frame(left, bg="#E3F2FD")
+        btn_row.pack(fill="x", padx=8, pady=(6, 8))
+        tk.Button(btn_row, text="+ New", font=("Segoe UI", 9, "bold"),
+                  bg="#2E7D32", fg="white", relief="flat", padx=6, pady=2,
+                  command=self._start_new_meeting).pack(side="left", expand=True, fill="x", padx=(0, 2))
+        tk.Button(btn_row, text="Delete", font=("Segoe UI", 9, "bold"),
+                  bg="#C62828", fg="white", relief="flat", padx=6, pady=2,
+                  command=self._delete_meeting).pack(side="left", expand=True, fill="x", padx=(2, 0))
 
-        self.tree = ttk.Treeview(grid_frame, show="headings", height=22)
+        right = tk.Frame(main, bg="#FFFFFF")
+        right.pack(side="left", fill="both", expand=True)
+
+        self.summary_label = tk.Label(right, text="", font=("Segoe UI", 10, "bold"),
+                                      fg="#333333", bg="#FFFFFF", anchor="w")
+        self.summary_label.pack(fill="x", padx=4, pady=(0, 4))
+
+        grid_frame = tk.Frame(right, bg="#FFFFFF")
+        grid_frame.pack(fill="both", expand=True)
+
+        self.tree = ttk.Treeview(grid_frame, show="headings", height=18)
         self.tree.pack(side="left", fill="both", expand=True)
 
         tree_scroll_y = ttk.Scrollbar(grid_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=tree_scroll_y.set)
         tree_scroll_y.pack(side="right", fill="y")
 
-        tree_scroll_x = ttk.Scrollbar(self, orient="horizontal", command=self.tree.xview)
+        tree_scroll_x = ttk.Scrollbar(right, orient="horizontal", command=self.tree.xview)
         self.tree.configure(xscrollcommand=tree_scroll_x.set)
-        tree_scroll_x.pack(fill="x", padx=15)
+        tree_scroll_x.pack(fill="x")
 
         style = ttk.Style()
-        style.configure("Treeview", font=("Segoe UI", 10), rowheight=30)
+        style.configure("Treeview", font=("Segoe UI", 10), rowheight=28)
         style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
 
         self.tree.bind("<Button-1>", self._on_cell_click)
 
-        bottom = tk.Frame(self, bg="#E3F2FD")
-        bottom.pack(fill="x", padx=15, pady=(5, 10))
+        bottom = tk.Frame(right, bg="#E3F2FD")
+        bottom.pack(fill="x", pady=(6, 0))
 
-        notes_row = tk.Frame(bottom, bg="#E3F2FD")
-        notes_row.pack(fill="x", pady=(5, 0))
-        tk.Label(notes_row, text="Meeting Minutes:", font=("Segoe UI", 10, "bold"),
-                 bg="#E3F2FD", fg="#1565C0").pack(side="left", anchor="n")
-        self.notes_text = tk.Text(notes_row, height=4, font=("Segoe UI", 10), wrap="word",
-                                  bg="white", relief="solid", bd=1, width=70)
-        self.notes_text.pack(side="left", padx=(8, 0), fill="x", expand=True)
+        text_row = tk.Frame(bottom, bg="#E3F2FD")
+        text_row.pack(fill="x", padx=4, pady=(4, 0))
 
-        decisions_row = tk.Frame(bottom, bg="#E3F2FD")
-        decisions_row.pack(fill="x", pady=(5, 0))
-        tk.Label(decisions_row, text="Decisions:    ", font=("Segoe UI", 10, "bold"),
-                 bg="#E3F2FD", fg="#1565C0").pack(side="left", anchor="n")
-        self.decisions_text = tk.Text(decisions_row, height=3, font=("Segoe UI", 10), wrap="word",
-                                      bg="white", relief="solid", bd=1, width=70)
-        self.decisions_text.pack(side="left", padx=(8, 0), fill="x", expand=True)
+        left_text = tk.Frame(text_row, bg="#E3F2FD")
+        left_text.pack(side="left", fill="both", expand=True, padx=(0, 4))
+        tk.Label(left_text, text="Meeting Minutes:", font=("Segoe UI", 9, "bold"),
+                 bg="#E3F2FD", fg="#1565C0").pack(anchor="w")
+        self.notes_text = tk.Text(left_text, height=3, font=("Segoe UI", 9), wrap="word",
+                                  bg="white", relief="solid", bd=1)
+        self.notes_text.pack(fill="both", expand=True)
+
+        right_text = tk.Frame(text_row, bg="#E3F2FD")
+        right_text.pack(side="left", fill="both", expand=True, padx=(4, 0))
+        tk.Label(right_text, text="Decisions:", font=("Segoe UI", 9, "bold"),
+                 bg="#E3F2FD", fg="#1565C0").pack(anchor="w")
+        self.decisions_text = tk.Text(right_text, height=3, font=("Segoe UI", 9), wrap="word",
+                                      bg="white", relief="solid", bd=1)
+        self.decisions_text.pack(fill="both", expand=True)
 
         levy_row = tk.Frame(bottom, bg="#E3F2FD")
-        levy_row.pack(fill="x", pady=(5, 0))
-        tk.Label(levy_row, text="Absence fine:", font=("Segoe UI", 10, "bold"),
+        levy_row.pack(fill="x", padx=4, pady=(4, 0))
+        tk.Label(levy_row, text="Absence fine:", font=("Segoe UI", 9, "bold"),
                  bg="#E3F2FD", fg="#1565C0").pack(side="left")
         self.fine_var = tk.StringVar(value=get_setting("absent_fine", "0"))
-        tk.Entry(levy_row, textvariable=self.fine_var, font=("Segoe UI", 10),
-                 width=10, bg="white", relief="solid", bd=1).pack(side="left", padx=(4, 12))
-        tk.Label(levy_row, text="Minutes levy:", font=("Segoe UI", 10, "bold"),
+        tk.Entry(levy_row, textvariable=self.fine_var, font=("Segoe UI", 9),
+                 width=8, bg="white", relief="solid", bd=1).pack(side="left", padx=(4, 10))
+        tk.Label(levy_row, text="Minutes levy:", font=("Segoe UI", 9, "bold"),
                  bg="#E3F2FD", fg="#1565C0").pack(side="left")
         self.levy_var = tk.StringVar(value="0")
-        tk.Entry(levy_row, textvariable=self.levy_var, font=("Segoe UI", 10),
-                 width=10, bg="white", relief="solid", bd=1).pack(side="left", padx=(4, 12))
-        tk.Button(levy_row, text="Apply Levy", font=("Segoe UI", 9, "bold"),
-                  bg="#E65100", fg="white", relief="flat", padx=8, pady=2,
-                  command=self._apply_levy).pack(side="left", padx=(0, 12))
+        tk.Entry(levy_row, textvariable=self.levy_var, font=("Segoe UI", 9),
+                 width=8, bg="white", relief="solid", bd=1).pack(side="left", padx=(4, 10))
+        tk.Button(levy_row, text="Apply Levy", font=("Segoe UI", 8, "bold"),
+                  bg="#E65100", fg="white", relief="flat", padx=6, pady=1,
+                  command=self._apply_levy).pack(side="left")
 
-        save_row = tk.Frame(bottom, bg="#E3F2FD")
-        save_row.pack(fill="x", pady=(8, 0))
-        tk.Button(save_row, text="SAVE ATTENDANCE", font=("Segoe UI", 11, "bold"),
-                  bg="#1565C0", fg="white", relief="flat", padx=20, pady=5,
-                  command=self._save_attendance).pack(side="left")
+        action_row = tk.Frame(bottom, bg="#E3F2FD")
+        action_row.pack(fill="x", padx=4, pady=(6, 0))
+        tk.Button(action_row, text="SAVE ATTENDANCE", font=("Segoe UI", 10, "bold"),
+                  bg="#1565C0", fg="white", relief="flat", padx=14, pady=4,
+                  command=self._save_attendance).pack(side="left", padx=(0, 8))
+        tk.Button(action_row, text="SAVE MINUTES", font=("Segoe UI", 10, "bold"),
+                  bg="#2E7D32", fg="white", relief="flat", padx=14, pady=4,
+                  command=self._save_minutes).pack(side="left")
+
+        print_row = tk.Frame(bottom, bg="#E3F2FD")
+        print_row.pack(fill="x", padx=4, pady=(4, 6))
+        tk.Button(print_row, text="Print Attendance", font=("Segoe UI", 9),
+                  bg="#0D47A1", fg="white", relief="flat", padx=8, pady=2,
+                  command=self._print_attendance_sheet).pack(side="left", padx=(0, 4))
+        tk.Button(print_row, text="Print Minutes", font=("Segoe UI", 9),
+                  bg="#0D47A1", fg="white", relief="flat", padx=8, pady=2,
+                  command=self._print_meeting_minutes).pack(side="left", padx=(0, 4))
+        tk.Button(print_row, text="Print Summary", font=("Segoe UI", 9),
+                  bg="#0D47A1", fg="white", relief="flat", padx=8, pady=2,
+                  command=self._print_monthly_summary).pack(side="left")
 
     def _step_month(self, delta):
         self.current_month += delta
@@ -184,6 +216,7 @@ class AttendanceForm(tk.Frame):
                 "id": r["id"],
                 "date": r["date"],
                 "label": d.strftime("%d %b"),
+                "meeting_number": r["meeting_number"],
                 "notes": r["notes"] or "",
                 "decisions": r["decisions"] or "",
             })
@@ -194,9 +227,37 @@ class AttendanceForm(tk.Frame):
             self.current_meeting_id = None
 
         self._load_all_attendance()
+        self._populate_meeting_list()
         self._build_grid()
         self._load_notes_for_current()
         self._update_summary()
+
+    def _populate_meeting_list(self):
+        self.meeting_listbox.delete(0, "end")
+        for mtg in self.month_meetings:
+            marker = " *" if mtg["id"] == self.current_meeting_id else ""
+            self.meeting_listbox.insert("end", f"{mtg['label']}{marker}")
+        if self.current_meeting_id and self.month_meetings:
+            idx = len(self.month_meetings) - 1
+            for i, mtg in enumerate(self.month_meetings):
+                if mtg["id"] == self.current_meeting_id:
+                    idx = i
+                    break
+            self.meeting_listbox.selection_clear(0, "end")
+            self.meeting_listbox.selection_set(idx)
+            self.meeting_listbox.see(idx)
+
+    def _on_meeting_select(self, event):
+        sel = self.meeting_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        if idx < len(self.month_meetings):
+            self.current_meeting_id = self.month_meetings[idx]["id"]
+            self._populate_meeting_list()
+            self._build_grid()
+            self._load_notes_for_current()
+            self._update_summary()
 
     def _load_all_attendance(self):
         self.attendance_status = {}
@@ -231,12 +292,12 @@ class AttendanceForm(tk.Frame):
             self._date_col_map[col_id] = mtg
 
         self.tree["columns"] = tuple(cols)
-        self.tree.column("member_name", width=200, minwidth=160)
+        self.tree.column("member_name", width=180, minwidth=140)
         self.tree.heading("member_name", text="Member Name", anchor="w")
 
         for mtg in self.month_meetings:
             col_id = f"date_{mtg['id']}"
-            self.tree.column(col_id, width=100, minwidth=80, anchor="center")
+            self.tree.column(col_id, width=90, minwidth=70, anchor="center")
             is_current = mtg["id"] == self.current_meeting_id
             heading_text = mtg["label"] + (" *" if is_current else "")
             self.tree.heading(col_id, text=heading_text, anchor="center")
@@ -248,7 +309,6 @@ class AttendanceForm(tk.Frame):
 
         for idx, m in enumerate(members):
             values = [m["full_name"]]
-            tags = ()
             for mtg in self.month_meetings:
                 status = self.attendance_status.get(m["id"], {}).get(mtg["id"], "")
                 if status == "Present":
@@ -258,15 +318,8 @@ class AttendanceForm(tk.Frame):
                 else:
                     values.append("")
 
-            row_tags = ("current",) if True else ()
             iid = str(m["id"])
-            self.tree.insert("", "end", iid=iid, values=values, tags=row_tags)
-
-        self.tree.tag_configure("current", background="#FFFFFF")
-
-        if self.current_meeting_id:
-            col_id = f"date_{self.current_meeting_id}"
-            self.tree.tag_configure("editable_col", background="#E3F2FD")
+            self.tree.insert("", "end", iid=iid, values=values)
 
     def _on_cell_click(self, event):
         if self.current_meeting_id is None:
@@ -419,7 +472,7 @@ class AttendanceForm(tk.Frame):
         mtg_date = ""
         for mtg in self.month_meetings:
             if mtg["id"] == self.current_meeting_id:
-                mtg_label = f"#{mtg['id']}"
+                mtg_label = f"#{mtg['meeting_number']}"
                 mtg_date = mtg["label"]
                 break
         confirm = messagebox.askyesno(
@@ -511,6 +564,19 @@ class AttendanceForm(tk.Frame):
         messagebox.showinfo("Saved", f"Attendance saved.\n{summary}")
         self._load_month()
 
+    def _save_minutes(self):
+        if self.current_meeting_id is None:
+            messagebox.showwarning("No Meeting", "Select a meeting first.")
+            return
+        notes = self.notes_text.get("1.0", "end").strip()
+        decisions = self.decisions_text.get("1.0", "end").strip()
+        conn = get_connection()
+        conn.execute("UPDATE meetings SET notes = ?, decisions = ? WHERE id = ?",
+                     (notes, decisions, self.current_meeting_id))
+        conn.commit()
+        messagebox.showinfo("Saved", "Meeting minutes and decisions saved.")
+        self._load_month()
+
     def _apply_levy(self):
         if self.current_meeting_id is None:
             messagebox.showwarning("No Meeting", "No meeting selected for this month.")
@@ -598,7 +664,7 @@ tr:nth-child(even) {{ background: #f9f9f9; }}
 .footer {{ margin-top: 20px; font-size: 10px; color: #999; text-align: center; }}
 @media print {{ body {{ margin: 10mm; }} @page {{ size: landscape; }} }}
 </style></head><body>
-<h1>ORISUN IBUKUN (Owode Unit) — Attendance Sheet</h1>
+<h1>ORISUN IBUKUN (Owode Unit) &mdash; Attendance Sheet</h1>
 <p class="sub">{_html.escape(month_name)} &nbsp;|&nbsp; Generated: {_html.escape(stamp)}</p>
 <table>
 <tr><th>Member Name</th><th>Member ID</th>{mtg_headers}</tr>
@@ -606,6 +672,7 @@ tr:nth-child(even) {{ background: #f9f9f9; }}
 {summary_row}
 </table>
 <div class="footer">ORISUN IBUKUN Cooperative Management System</div>
+<script>window.onload = function() {{ setTimeout(function() {{ window.print(); }}, 500); }};</script>
 </body></html>"""
 
         out = DB_DIR / "attendance_print.html"
@@ -666,15 +733,15 @@ li {{ margin-bottom: 2px; }}
 .footer {{ margin-top: 30px; font-size: 10px; color: #999; text-align: center; border-top: 1px solid #ddd; padding-top: 8px; }}
 @media print {{ body {{ margin: 10mm; }} }}
 </style></head><body>
-<h1>ORISUN IBUKUN (Owode Unit) — Meeting Minutes</h1>
+<h1>ORISUN IBUKUN (Owode Unit) &mdash; Meeting Minutes</h1>
 <div class="meta">
 <b>Meeting:</b> #{mtg['meeting_number']} &nbsp;|&nbsp; <b>Date:</b> {_html.escape(d.strftime('%d %B %Y'))} &nbsp;|&nbsp; <b>Generated:</b> {_html.escape(stamp)}
 </div>
 
-<h2>Attendance — Present ({len(present_list)})</h2>
+<h2>Attendance &mdash; Present ({len(present_list)})</h2>
 <ul>{present_html}</ul>
 
-<h2>Attendance — Absent ({len(absent_list)})</h2>
+<h2>Attendance &mdash; Absent ({len(absent_list)})</h2>
 <ul>{absent_html}</ul>
 
 <h2>Minutes</h2>
@@ -684,6 +751,7 @@ li {{ margin-bottom: 2px; }}
 <div class="content">{decisions_content}</div>
 
 <div class="footer">ORISUN IBUKUN Cooperative Management System</div>
+<script>window.onload = function() {{ setTimeout(function() {{ window.print(); }}, 500); }};</script>
 </body></html>"""
 
         out = DB_DIR / "minutes_print.html"
@@ -711,7 +779,6 @@ li {{ margin-bottom: 2px; }}
         worst_rate = 100
         best_name = ""
         worst_name = ""
-        total_fines = 0
 
         for m in members:
             p = sum(1 for mtg in self.month_meetings
@@ -771,7 +838,7 @@ tr:nth-child(even) {{ background: #f9f9f9; }}
 .footer {{ margin-top: 20px; font-size: 10px; color: #999; text-align: center; }}
 @media print {{ body {{ margin: 10mm; }} @page {{ size: landscape; }} }}
 </style></head><body>
-<h1>ORISUN IBUKUN (Owode Unit) — Monthly Attendance Summary</h1>
+<h1>ORISUN IBUKUN (Owode Unit) &mdash; Monthly Attendance Summary</h1>
 <p class="sub">{_html.escape(month_name)} &nbsp;|&nbsp; Generated: {_html.escape(stamp)}</p>
 
 <div class="stats">
@@ -790,6 +857,7 @@ tr:nth-child(even) {{ background: #f9f9f9; }}
 </table>
 
 <div class="footer">ORISUN IBUKUN Cooperative Management System</div>
+<script>window.onload = function() {{ setTimeout(function() {{ window.print(); }}, 500); }};</script>
 </body></html>"""
 
         out = DB_DIR / "summary_print.html"
