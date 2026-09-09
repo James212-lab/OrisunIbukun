@@ -290,14 +290,30 @@ class SavingsForm(tk.Frame):
         info_frame = tk.Frame(c, bg=LIGHT_BLUE, padx=12, pady=8)
         info_frame.pack(fill="x", pady=(0, 8))
         self.info_labels = {}
+
+        row1 = tk.Frame(info_frame, bg=LIGHT_BLUE)
+        row1.pack(fill="x", pady=(0, 4))
         for key, label in [("savings", "Savings"), ("shares", "Shares"),
-                           ("active_loan", "Active Loan"), ("outstanding", "Outstanding"),
-                           ("minutes_owed", "Minutes Owed"), ("fines_owed", "Fines Owed")]:
-            row = tk.Frame(info_frame, bg=LIGHT_BLUE)
-            row.pack(side="left", padx=(0, 15))
-            tk.Label(row, text=f"{label}:", font=("Segoe UI", 9, "bold"),
+                           ("active_loan", "Active Loan"), ("outstanding", "Outstanding")]:
+            f = tk.Frame(row1, bg=LIGHT_BLUE)
+            f.pack(side="left", padx=(0, 18))
+            tk.Label(f, text=f"{label}:", font=("Segoe UI", 9, "bold"),
                      fg=BLUE, bg=LIGHT_BLUE).pack(side="left")
-            val = tk.Label(row, text="--", font=("Segoe UI", 9),
+            val = tk.Label(f, text="--", font=("Segoe UI", 9, "bold"),
+                           fg="#333333", bg=LIGHT_BLUE)
+            val.pack(side="left", padx=(4, 0))
+            self.info_labels[key] = val
+
+        row2 = tk.Frame(info_frame, bg=LIGHT_BLUE)
+        row2.pack(fill="x")
+        for key, label in [("minutes_owed", "Minutes"), ("ict_owed", "ICT"),
+                           ("agm_owed", "AGM"), ("lateness_owed", "Lateness"),
+                           ("absentism_owed", "Absentism"), ("fines_owed", "Fines")]:
+            f = tk.Frame(row2, bg=LIGHT_BLUE)
+            f.pack(side="left", padx=(0, 14))
+            tk.Label(f, text=f"{label}:", font=("Segoe UI", 9, "bold"),
+                     fg=BLUE, bg=LIGHT_BLUE).pack(side="left")
+            val = tk.Label(f, text="--", font=("Segoe UI", 9),
                            fg="#333333", bg=LIGHT_BLUE)
             val.pack(side="left", padx=(4, 0))
             self.info_labels[key] = val
@@ -366,14 +382,29 @@ class SavingsForm(tk.Frame):
         self.info_labels["shares"].config(text=format_currency(summary["total_shares"]))
         self.info_labels["active_loan"].config(text=format_currency(summary["active_loan"]))
         self.info_labels["outstanding"].config(text=format_currency(summary["outstanding"]))
-        self.info_labels["minutes_owed"].config(text=format_currency(summary.get("minutes_owed", 0)))
-        self.info_labels["fines_owed"].config(text=format_currency(summary.get("fines_owed", 0)))
 
         for item in self.book_tree.get_children():
             self.book_tree.delete(item)
 
         rows = get_member_passbook(db_id)
+
+        fee_totals = {col_key: 0 for col_key, _, _ in PASSBOOK_FEE_COLUMNS}
+        total_savings = 0
+        total_loan_repay = 0
+        total_loan_collected = 0
+        total_other = 0
+        last_outstanding = 0
+
         for r in rows:
+            total_savings += r.get("savings", 0) or 0
+            total_loan_repay += r.get("loan_repayment", 0) or 0
+            total_loan_collected += r.get("loan_collected", 0) or 0
+            total_other += r.get("other", 0) or 0
+            if r.get("loan_outstanding", "") != "":
+                last_outstanding = r["loan_outstanding"] or 0
+            for col_key, _, _ in PASSBOOK_FEE_COLUMNS:
+                fee_totals[col_key] += r.get(col_key, 0) or 0
+
             vals = [r["date"],
                     format_currency(r["savings"]) if r["savings"] else "--",
                     format_currency(r["loan_repayment"]) if r["loan_repayment"] else "--"]
@@ -389,7 +420,30 @@ class SavingsForm(tk.Frame):
             ])
             self.book_tree.insert("", "end", values=vals)
 
-        if not rows:
+        self.info_labels["minutes_owed"].config(text=format_currency(fee_totals.get("minutes", 0)))
+        self.info_labels["ict_owed"].config(text=format_currency(fee_totals.get("ict", 0)))
+        self.info_labels["agm_owed"].config(text=format_currency(fee_totals.get("agm", 0)))
+        self.info_labels["lateness_owed"].config(text=format_currency(fee_totals.get("lateness", 0)))
+        self.info_labels["absentism_owed"].config(text=format_currency(fee_totals.get("absentism", 0)))
+        self.info_labels["fines_owed"].config(text=format_currency(fee_totals.get("fines", 0)))
+
+        if rows:
+            totals_vals = ["TOTALS",
+                           format_currency(total_savings) if total_savings else "--",
+                           format_currency(total_loan_repay) if total_loan_repay else "--"]
+            for col_key, _, _ in PASSBOOK_FEE_COLUMNS:
+                v = fee_totals[col_key]
+                totals_vals.append(format_currency(v) if v else "--")
+            totals_vals.extend([
+                format_currency(total_loan_collected) if total_loan_collected else "--",
+                format_currency(last_outstanding) if last_outstanding else "--",
+                format_currency(total_other) if total_other else "--",
+                "", "",
+            ])
+            self.book_tree.insert("", "end", values=totals_vals, tags=("totals",))
+            self.book_tree.tag_configure("totals", font=("Segoe UI", 10, "bold"),
+                                         background="#E8F5E9")
+        else:
             self.book_tree.insert("", "end", values=("--",) * len(self._passbook_cols))
 
     # ── EDIT VIEW ──────────────────────────────────────────────────
