@@ -597,6 +597,86 @@ def apply_minutes_levy(meeting_id: int, amount: float,
     return count
 
 
+def reverse_absence_charges(member_db_id: int, meeting_id: int,
+                            conn=None) -> int:
+    """Reverse Absence Fine and Minutes Levy charges for a member at a meeting.
+
+    If the charge is fully unpaid (amount_paid == 0), it is deleted.
+    If partially paid, the outstanding portion is zeroed out.
+    Returns the number of charges affected.
+    """
+    own_conn = conn is None
+    if own_conn:
+        conn = get_connection()
+    count = 0
+    rows = conn.execute(
+        """SELECT id, amount, amount_paid FROM member_charges
+           WHERE member_id = ? AND meeting_id = ?
+             AND charge_type IN (?, ?)""",
+        (member_db_id, meeting_id, CHARGE_ABSENCE_FINE, CHARGE_MINUTES_LEVY),
+    ).fetchall()
+    for r in rows:
+        paid = r["amount_paid"] or 0
+        if paid < 1e-9:
+            conn.execute("DELETE FROM member_charges WHERE id = ?", (r["id"],))
+        else:
+            conn.execute(
+                "UPDATE member_charges SET amount = ?, status = ? WHERE id = ?",
+                (paid, CHARGE_STATUS_PAID, r["id"]),
+            )
+        count += 1
+    if own_conn:
+        conn.commit()
+    return count
+
+
+def _log_attendance(conn, member_db_id: int, meeting_id: int,
+                    old_status: str, new_status: str, user_id: int = None):
+    """Log an attendance change to the audit log."""
+    row = conn.execute(
+        "SELECT full_name, member_id FROM members WHERE id = ?",
+        (member_db_id,),
+    ).fetchone()
+    name = row["full_name"] if row else "Unknown"
+    mid = row["member_id"] if row else "?"
+    old_label = old_status or "Unset"
+    new_label = new_status or "Unset"
+    conn.execute(
+        """INSERT INTO audit_logs (user_id, action, details)
+           VALUES (?, ?, ?)""",
+        (user_id, "Attendance Changed",
+         f"{name} ({mid}): Meeting #{meeting_id}: {old_label} -> {new_label}"),
+    )
+
+
+def delete_meeting(meeting_id: int, entered_by: int = None) -> bool:
+    """Delete a meeting and all its attendance + associated charges.
+
+    Returns True if the meeting was found and deleted.
+    """
+    conn = get_connection()
+    with conn:
+        mtg = conn.execute("SELECT id, date, meeting_number FROM meetings WHERE id = ?",
+                           (meeting_id,)).fetchone()
+        if not mtg:
+            return False
+        conn.execute("DELETE FROM attendance WHERE meeting_id = ?", (meeting_id,))
+        conn.execute("DELETE FROM member_charges WHERE meeting_id = ?", (meeting_id,))
+        conn.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
+        user_label = ""
+        if entered_by:
+            u = conn.execute("SELECT username FROM users WHERE id = ?",
+                             (entered_by,)).fetchone()
+            user_label = u["username"] if u else str(entered_by)
+        conn.execute(
+            """INSERT INTO audit_logs (user_id, action, details)
+               VALUES (?, ?, ?)""",
+            (entered_by, "Meeting Deleted",
+             f"Meeting #{mtg['meeting_number']} ({mtg['date']}) deleted by {user_label}"),
+        )
+    return True
+
+
 def create_other_charge(member_db_id: int, amount: float, description: str = "",
                         meeting_id: int = None, entered_by: int = None) -> str:
     """Create a tagged 'Other' charge for a member."""

@@ -2,8 +2,13 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import datetime
 from database.connection import get_connection
-from engines.transaction_engine import create_meeting, record_attendance
+from engines.transaction_engine import (
+    create_meeting, record_attendance, delete_meeting,
+    reverse_absence_charges, _log_attendance,
+    apply_absence_fines,
+)
 from database.schema import get_setting
+from utils.validators import validate_amount
 
 
 MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
@@ -52,10 +57,16 @@ class AttendanceForm(tk.Frame):
                   command=self._go_today).pack(side="left", padx=(15, 0))
 
         self.new_meeting_btn = tk.Button(nav, text="+ New Meeting", font=("Segoe UI", 10, "bold"),
-                                         bg="#2E7D32", fg="white", relief="flat",
-                                         padx=12, pady=3,
-                                         command=self._start_new_meeting)
+                                          bg="#2E7D32", fg="white", relief="flat",
+                                          padx=12, pady=3,
+                                          command=self._start_new_meeting)
         self.new_meeting_btn.pack(side="right")
+
+        self.delete_meeting_btn = tk.Button(nav, text="Delete Meeting", font=("Segoe UI", 10, "bold"),
+                                            bg="#C62828", fg="white", relief="flat",
+                                            padx=12, pady=3,
+                                            command=self._delete_meeting)
+        self.delete_meeting_btn.pack(side="right", padx=(0, 8))
 
         self.summary_label = tk.Label(nav, text="", font=("Segoe UI", 10),
                                       fg="#333333", bg="#E3F2FD")
@@ -372,36 +383,103 @@ class AttendanceForm(tk.Frame):
                   bg="#2E7D32", fg="white", relief="flat", padx=12, pady=4,
                   command=create).pack(pady=12)
 
-    def _save_attendance(self):
+    def _delete_meeting(self):
         if self.current_meeting_id is None:
-            messagebox.showwarning("No Meeting", "No meeting selected for this month.")
+            messagebox.showwarning("No Meeting", "No meeting selected.")
+            return
+        mtg_label = ""
+        mtg_date = ""
+        for mtg in self.month_meetings:
+            if mtg["id"] == self.current_meeting_id:
+                mtg_label = f"#{mtg['id']}"
+                mtg_date = mtg["label"]
+                break
+        confirm = messagebox.askyesno(
+            "Delete Meeting",
+            f"Delete Meeting {mtg_label} ({mtg_date})?\n\n"
+            "This will remove ALL attendance records and charges\n"
+            "for this meeting. This cannot be undone.",
+            parent=self,
+        )
+        if not confirm:
+            return
+        ok = delete_meeting(self.current_meeting_id,
+                            entered_by=self.current_user.get("id"))
+        if ok:
+            messagebox.showinfo("Deleted", f"Meeting {mtg_label} ({mtg_date}) deleted.")
+        else:
+            messagebox.showerror("Error", "Meeting not found.")
+        self._load_month()
+
+    def _save_attendance(self):
+        if not self.month_meetings:
+            messagebox.showwarning("No Meetings", "No meetings exist for this month.")
             return
 
         notes = self.notes_text.get("1.0", "end").strip()
         conn = get_connection()
-        conn.execute("UPDATE meetings SET notes = ? WHERE id = ?", (notes, self.current_meeting_id))
+        if self.current_meeting_id:
+            conn.execute("UPDATE meetings SET notes = ? WHERE id = ?",
+                         (notes, self.current_meeting_id))
+            conn.commit()
+
+        updated = 0
+        reversed_count = 0
+        logged = 0
+        uid = self.current_user.get("id")
+
+        for mtg in self.month_meetings:
+            mtg_id = mtg["id"]
+            old_statuses = {}
+            old_rows = conn.execute(
+                "SELECT member_id, status FROM attendance WHERE meeting_id = ?",
+                (mtg_id,),
+            ).fetchall()
+            for r in old_rows:
+                old_statuses[r["member_id"]] = r["status"]
+
+            for member_id, meetings in self.attendance_status.items():
+                new_status = meetings.get(mtg_id, "")
+                if new_status not in ("Present", "Absent"):
+                    continue
+                old_status = old_statuses.get(member_id, "")
+
+                if old_status == new_status:
+                    continue
+
+                record_attendance(mtg_id, member_id, new_status, uid)
+                updated += 1
+
+                if old_status == "Absent" and new_status == "Present":
+                    rev = reverse_absence_charges(member_id, mtg_id, conn=conn)
+                    reversed_count += rev
+
+                _log_attendance(conn, member_id, mtg_id,
+                                old_status, new_status, uid)
+                logged += 1
+
         conn.commit()
 
-        for member_id, meetings in self.attendance_status.items():
-            status = meetings.get(self.current_meeting_id, "")
-            if status in ("Present", "Absent"):
-                record_attendance(self.current_meeting_id, member_id, status,
-                                  self.current_user.get("id"))
-
-        from engines.transaction_engine import apply_absence_fines
-        from utils.validators import validate_amount
         fine_msg = ""
         try:
             fine = validate_amount(self.fine_var.get().strip() or "0")
-            if fine > 0:
+            if fine > 0 and self.current_meeting_id:
                 n = apply_absence_fines(self.current_meeting_id, fine,
-                                        entered_by=self.current_user.get("id"))
+                                        entered_by=uid)
                 if n:
                     fine_msg = f"\nAbsence fine charged to {n} absent member(s)."
         except ValueError as e:
             fine_msg = f"\nAbsence fine not applied: {e}"
 
-        messagebox.showinfo("Saved", f"Attendance saved successfully.{fine_msg}")
+        parts = []
+        if updated:
+            parts.append(f"{updated} record(s) updated")
+        if reversed_count:
+            parts.append(f"{reversed_count} absence charge(s) reversed")
+        if not parts:
+            parts.append("No changes")
+        summary = ", ".join(parts) + fine_msg
+        messagebox.showinfo("Saved", f"Attendance saved.\n{summary}")
         self._load_month()
 
     def _apply_levy(self):
