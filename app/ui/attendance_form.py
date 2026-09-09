@@ -101,7 +101,7 @@ class AttendanceForm(tk.Frame):
         grid_frame = tk.Frame(right, bg="#FFFFFF")
         grid_frame.pack(fill="x")
 
-        self.tree = ttk.Treeview(grid_frame, show="headings", height=18)
+        self.tree = ttk.Treeview(grid_frame, show="headings", height=10)
         self.tree.pack(side="left", fill="both", expand=True)
 
         tree_scroll_y = ttk.Scrollbar(grid_frame, orient="vertical", command=self.tree.yview)
