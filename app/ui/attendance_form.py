@@ -56,6 +56,16 @@ class AttendanceForm(tk.Frame):
                   relief="flat", padx=8, pady=2,
                   command=self._go_today).pack(side="left", padx=(15, 0))
 
+        tk.Button(nav, text="Print Attendance", font=("Segoe UI", 9),
+                  bg="#0D47A1", fg="white", relief="flat", padx=8, pady=2,
+                  command=self._print_attendance_sheet).pack(side="left", padx=(8, 0))
+        tk.Button(nav, text="Print Minutes", font=("Segoe UI", 9),
+                  bg="#0D47A1", fg="white", relief="flat", padx=8, pady=2,
+                  command=self._print_meeting_minutes).pack(side="left", padx=(4, 0))
+        tk.Button(nav, text="Print Summary", font=("Segoe UI", 9),
+                  bg="#0D47A1", fg="white", relief="flat", padx=8, pady=2,
+                  command=self._print_monthly_summary).pack(side="left", padx=(4, 0))
+
         self.new_meeting_btn = tk.Button(nav, text="+ New Meeting", font=("Segoe UI", 10, "bold"),
                                           bg="#2E7D32", fg="white", relief="flat",
                                           padx=12, pady=3,
@@ -99,11 +109,19 @@ class AttendanceForm(tk.Frame):
 
         notes_row = tk.Frame(bottom, bg="#E3F2FD")
         notes_row.pack(fill="x", pady=(5, 0))
-        tk.Label(notes_row, text="Meeting Notes:", font=("Segoe UI", 10, "bold"),
-                 bg="#E3F2FD", fg="#1565C0").pack(side="left")
-        self.notes_text = tk.Text(notes_row, height=2, font=("Segoe UI", 10), wrap="word",
-                                  bg="white", relief="solid", bd=1, width=60)
+        tk.Label(notes_row, text="Meeting Minutes:", font=("Segoe UI", 10, "bold"),
+                 bg="#E3F2FD", fg="#1565C0").pack(side="left", anchor="n")
+        self.notes_text = tk.Text(notes_row, height=4, font=("Segoe UI", 10), wrap="word",
+                                  bg="white", relief="solid", bd=1, width=70)
         self.notes_text.pack(side="left", padx=(8, 0), fill="x", expand=True)
+
+        decisions_row = tk.Frame(bottom, bg="#E3F2FD")
+        decisions_row.pack(fill="x", pady=(5, 0))
+        tk.Label(decisions_row, text="Decisions:    ", font=("Segoe UI", 10, "bold"),
+                 bg="#E3F2FD", fg="#1565C0").pack(side="left", anchor="n")
+        self.decisions_text = tk.Text(decisions_row, height=3, font=("Segoe UI", 10), wrap="word",
+                                      bg="white", relief="solid", bd=1, width=70)
+        self.decisions_text.pack(side="left", padx=(8, 0), fill="x", expand=True)
 
         levy_row = tk.Frame(bottom, bg="#E3F2FD")
         levy_row.pack(fill="x", pady=(5, 0))
@@ -120,9 +138,12 @@ class AttendanceForm(tk.Frame):
         tk.Button(levy_row, text="Apply Levy", font=("Segoe UI", 9, "bold"),
                   bg="#E65100", fg="white", relief="flat", padx=8, pady=2,
                   command=self._apply_levy).pack(side="left", padx=(0, 12))
-        tk.Button(levy_row, text="Save Attendance", font=("Segoe UI", 10, "bold"),
-                  bg="#1565C0", fg="white", relief="flat", padx=14, pady=3,
-                  command=self._save_attendance).pack(side="right")
+
+        save_row = tk.Frame(bottom, bg="#E3F2FD")
+        save_row.pack(fill="x", pady=(8, 0))
+        tk.Button(save_row, text="SAVE ATTENDANCE", font=("Segoe UI", 11, "bold"),
+                  bg="#1565C0", fg="white", relief="flat", padx=20, pady=5,
+                  command=self._save_attendance).pack(side="left")
 
     def _step_month(self, delta):
         self.current_month += delta
@@ -151,7 +172,7 @@ class AttendanceForm(tk.Frame):
             month_end = f"{self.current_year}-{self.current_month + 1:02d}-01"
 
         meeting_rows = conn.execute(
-            "SELECT id, date, meeting_number, notes FROM meetings "
+            "SELECT id, date, meeting_number, notes, decisions FROM meetings "
             "WHERE date >= ? AND date < ? ORDER BY date",
             (month_start, month_end),
         ).fetchall()
@@ -164,6 +185,7 @@ class AttendanceForm(tk.Frame):
                 "date": r["date"],
                 "label": d.strftime("%d %b"),
                 "notes": r["notes"] or "",
+                "decisions": r["decisions"] or "",
             })
 
         if self.month_meetings:
@@ -304,12 +326,18 @@ class AttendanceForm(tk.Frame):
 
     def _load_notes_for_current(self):
         self.notes_text.delete("1.0", "end")
+        self.decisions_text.delete("1.0", "end")
         if self.current_meeting_id:
             for mtg in self.month_meetings:
                 if mtg["id"] == self.current_meeting_id:
                     if mtg["notes"]:
                         self.notes_text.insert("1.0", mtg["notes"])
                     break
+            conn = get_connection()
+            row = conn.execute("SELECT decisions FROM meetings WHERE id = ?",
+                               (self.current_meeting_id,)).fetchone()
+            if row and row["decisions"]:
+                self.decisions_text.insert("1.0", row["decisions"])
 
     def _update_summary(self, meeting_id=None):
         mid = meeting_id or self.current_meeting_id
@@ -417,10 +445,11 @@ class AttendanceForm(tk.Frame):
             return
 
         notes = self.notes_text.get("1.0", "end").strip()
+        decisions = self.decisions_text.get("1.0", "end").strip()
         conn = get_connection()
         if self.current_meeting_id:
-            conn.execute("UPDATE meetings SET notes = ? WHERE id = ?",
-                         (notes, self.current_meeting_id))
+            conn.execute("UPDATE meetings SET notes = ?, decisions = ? WHERE id = ?",
+                         (notes, decisions, self.current_meeting_id))
             conn.commit()
 
         updated = 0
@@ -508,3 +537,262 @@ class AttendanceForm(tk.Frame):
             messagebox.showinfo("Levy Applied", f"Minutes levy charged to {n} absent member(s).")
         else:
             messagebox.showinfo("Levy Applied", "No new charges (levy may already have been applied).")
+
+    def _print_attendance_sheet(self):
+        if not self.month_meetings:
+            messagebox.showwarning("No Data", "No meetings for this month.")
+            return
+        import html as _html
+        import webbrowser
+        from database.connection import DB_DIR
+
+        month_name = f"{MONTH_NAMES[self.current_month - 1]} {self.current_year}"
+        conn = get_connection()
+        members = conn.execute(
+            "SELECT id, full_name, member_id FROM members WHERE status = 'Active' ORDER BY full_name"
+        ).fetchall()
+
+        mtg_headers = ""
+        for mtg in self.month_meetings:
+            mtg_headers += f'<th style="text-align:center; min-width:60px;">{_html.escape(mtg["label"])}</th>'
+
+        rows_html = ""
+        for m in members:
+            cells = ""
+            for mtg in self.month_meetings:
+                status = self.attendance_status.get(m["id"], {}).get(mtg["id"], "")
+                if status == "Present":
+                    cells += '<td style="text-align:center; color:#2E7D32; font-weight:bold;">&#10003;</td>'
+                elif status == "Absent":
+                    cells += '<td style="text-align:center; color:#C62828; font-weight:bold;">&#10007;</td>'
+                else:
+                    cells += '<td style="text-align:center;">-</td>'
+            rows_html += f"<tr><td>{_html.escape(m['full_name'])}</td><td style='color:#666;'>{_html.escape(m['member_id'])}</td>{cells}</tr>\n"
+
+        present_counts = []
+        absent_counts = []
+        for mtg in self.month_meetings:
+            p = sum(1 for m in members if self.attendance_status.get(m["id"], {}).get(mtg["id"]) == "Present")
+            a = sum(1 for m in members if self.attendance_status.get(m["id"], {}).get(mtg["id"]) == "Absent")
+            present_counts.append(p)
+            absent_counts.append(a)
+
+        summary_cells = ""
+        for i, mtg in enumerate(self.month_meetings):
+            total = present_counts[i] + absent_counts[i]
+            rate = f"{present_counts[i]/total*100:.0f}%" if total else "0%"
+            summary_cells += f'<td style="text-align:center;">P:{present_counts[i]} A:{absent_counts[i]} ({rate})</td>'
+        summary_row = f"<tr style='font-weight:bold; background:#E3F2FD;'><td colspan='2'>Summary</td>{summary_cells}</tr>"
+
+        stamp = datetime.datetime.now().strftime("%d %b %Y %H:%M")
+        page = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Attendance Sheet - {month_name}</title>
+<style>
+body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 20px; }}
+h1 {{ color: #1565C0; font-size: 18px; border-bottom: 2px solid #1565C0; padding-bottom: 6px; }}
+.sub {{ color: #666; font-size: 11px; margin-bottom: 15px; }}
+table {{ border-collapse: collapse; width: 100%; font-size: 12px; }}
+th {{ background: #1565C0; color: white; padding: 6px 8px; text-align: left; }}
+td {{ border: 1px solid #ddd; padding: 4px 8px; }}
+tr:nth-child(even) {{ background: #f9f9f9; }}
+.footer {{ margin-top: 20px; font-size: 10px; color: #999; text-align: center; }}
+@media print {{ body {{ margin: 10mm; }} @page {{ size: landscape; }} }}
+</style></head><body>
+<h1>ORISUN IBUKUN (Owode Unit) — Attendance Sheet</h1>
+<p class="sub">{_html.escape(month_name)} &nbsp;|&nbsp; Generated: {_html.escape(stamp)}</p>
+<table>
+<tr><th>Member Name</th><th>Member ID</th>{mtg_headers}</tr>
+{rows_html}
+{summary_row}
+</table>
+<div class="footer">ORISUN IBUKUN Cooperative Management System</div>
+</body></html>"""
+
+        out = DB_DIR / "attendance_print.html"
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(page)
+        webbrowser.open("file:///" + str(out).replace("\\", "/"))
+
+    def _print_meeting_minutes(self):
+        if self.current_meeting_id is None:
+            messagebox.showwarning("No Meeting", "Select a meeting first.")
+            return
+        import html as _html
+        import webbrowser
+        from database.connection import DB_DIR
+
+        conn = get_connection()
+        mtg = conn.execute(
+            "SELECT id, meeting_number, date, notes, decisions FROM meetings WHERE id = ?",
+            (self.current_meeting_id,),
+        ).fetchone()
+        if not mtg:
+            messagebox.showerror("Error", "Meeting not found.")
+            return
+
+        present_list = []
+        absent_list = []
+        for m_id, meetings in self.attendance_status.items():
+            status = meetings.get(self.current_meeting_id, "")
+            row = conn.execute("SELECT full_name, member_id FROM members WHERE id = ?",
+                               (m_id,)).fetchone()
+            if not row:
+                continue
+            label = f"{row['full_name']} ({row['member_id']})"
+            if status == "Present":
+                present_list.append(label)
+            elif status == "Absent":
+                absent_list.append(label)
+
+        present_html = "".join(f"<li>{_html.escape(n)}</li>" for n in present_list) if present_list else "<li>None recorded</li>"
+        absent_html = "".join(f"<li>{_html.escape(n)}</li>" for n in absent_list) if absent_list else "<li>None recorded</li>"
+
+        notes_content = _html.escape(mtg["notes"] or "No minutes recorded.").replace("\n", "<br>")
+        decisions_content = _html.escape(mtg["decisions"] or "None recorded.").replace("\n", "<br>")
+
+        stamp = datetime.datetime.now().strftime("%d %b %Y %H:%M")
+        d = datetime.date.fromisoformat(mtg["date"])
+        page = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Meeting Minutes - Meeting #{mtg['meeting_number']}</title>
+<style>
+body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 20px; color: #333; }}
+h1 {{ color: #1565C0; font-size: 18px; border-bottom: 2px solid #1565C0; padding-bottom: 6px; }}
+h2 {{ color: #1565C0; font-size: 14px; margin-top: 18px; margin-bottom: 6px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }}
+.meta {{ background: #E3F2FD; padding: 10px 14px; border-radius: 4px; margin-bottom: 16px; font-size: 12px; }}
+.meta b {{ color: #1565C0; }}
+.content {{ background: #f9f9f9; padding: 12px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 12px; font-size: 12px; line-height: 1.6; min-height: 40px; }}
+ul {{ margin: 4px 0; padding-left: 20px; font-size: 12px; }}
+li {{ margin-bottom: 2px; }}
+.footer {{ margin-top: 30px; font-size: 10px; color: #999; text-align: center; border-top: 1px solid #ddd; padding-top: 8px; }}
+@media print {{ body {{ margin: 10mm; }} }}
+</style></head><body>
+<h1>ORISUN IBUKUN (Owode Unit) — Meeting Minutes</h1>
+<div class="meta">
+<b>Meeting:</b> #{mtg['meeting_number']} &nbsp;|&nbsp; <b>Date:</b> {_html.escape(d.strftime('%d %B %Y'))} &nbsp;|&nbsp; <b>Generated:</b> {_html.escape(stamp)}
+</div>
+
+<h2>Attendance — Present ({len(present_list)})</h2>
+<ul>{present_html}</ul>
+
+<h2>Attendance — Absent ({len(absent_list)})</h2>
+<ul>{absent_html}</ul>
+
+<h2>Minutes</h2>
+<div class="content">{notes_content}</div>
+
+<h2>Decisions</h2>
+<div class="content">{decisions_content}</div>
+
+<div class="footer">ORISUN IBUKUN Cooperative Management System</div>
+</body></html>"""
+
+        out = DB_DIR / "minutes_print.html"
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(page)
+        webbrowser.open("file:///" + str(out).replace("\\", "/"))
+
+    def _print_monthly_summary(self):
+        if not self.month_meetings:
+            messagebox.showwarning("No Data", "No meetings for this month.")
+            return
+        import html as _html
+        import webbrowser
+        from database.connection import DB_DIR
+
+        month_name = f"{MONTH_NAMES[self.current_month - 1]} {self.current_year}"
+        conn = get_connection()
+        members = conn.execute(
+            "SELECT id, full_name, member_id FROM members WHERE status = 'Active' ORDER BY full_name"
+        ).fetchall()
+
+        total_meetings = len(self.month_meetings)
+        rows_html = ""
+        best_rate = 0
+        worst_rate = 100
+        best_name = ""
+        worst_name = ""
+        total_fines = 0
+
+        for m in members:
+            p = sum(1 for mtg in self.month_meetings
+                    if self.attendance_status.get(m["id"], {}).get(mtg["id"]) == "Present")
+            a = sum(1 for mtg in self.month_meetings
+                    if self.attendance_status.get(m["id"], {}).get(mtg["id"]) == "Absent")
+            total = p + a
+            rate = (p / total * 100) if total else 0
+            if total > 0:
+                if rate >= best_rate:
+                    best_rate = rate
+                    best_name = m["full_name"]
+                if rate <= worst_rate:
+                    worst_rate = rate
+                    worst_name = m["full_name"]
+            rows_html += (
+                f"<tr><td>{_html.escape(m['full_name'])}</td>"
+                f"<td style='text-align:center;'>{total_meetings}</td>"
+                f"<td style='text-align:center; color:#2E7D32;'>{p}</td>"
+                f"<td style='text-align:center; color:#C62828;'>{a}</td>"
+                f"<td style='text-align:center; font-weight:bold;'>{rate:.0f}%</td></tr>\n"
+            )
+
+        fines_row = conn.execute(
+            "SELECT COALESCE(SUM(amount),0) as total FROM member_charges "
+            "WHERE charge_type = 'Absence Fine' AND meeting_id IN "
+            f"({','.join('?' * total_meetings)})",
+            [mtg["id"] for mtg in self.month_meetings],
+        ).fetchone()
+        total_fines = fines_row["total"] if fines_row else 0
+
+        overall_present = sum(
+            1 for m in members for mtg in self.month_meetings
+            if self.attendance_status.get(m["id"], {}).get(mtg["id"]) == "Present"
+        )
+        overall_total = sum(
+            1 for m in members for mtg in self.month_meetings
+            if self.attendance_status.get(m["id"], {}).get(mtg["id"]) in ("Present", "Absent")
+        )
+        overall_rate = (overall_present / overall_total * 100) if overall_total else 0
+
+        stamp = datetime.datetime.now().strftime("%d %b %Y %H:%M")
+        page = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Monthly Attendance Summary - {month_name}</title>
+<style>
+body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 20px; color: #333; }}
+h1 {{ color: #1565C0; font-size: 18px; border-bottom: 2px solid #1565C0; padding-bottom: 6px; }}
+.sub {{ color: #666; font-size: 11px; margin-bottom: 15px; }}
+.stats {{ display: flex; gap: 20px; margin-bottom: 20px; }}
+.stat-box {{ background: #E3F2FD; border-radius: 6px; padding: 12px 18px; text-align: center; min-width: 120px; }}
+.stat-box .num {{ font-size: 22px; font-weight: bold; color: #1565C0; }}
+.stat-box .lbl {{ font-size: 11px; color: #666; margin-top: 2px; }}
+table {{ border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 12px; }}
+th {{ background: #1565C0; color: white; padding: 6px 8px; text-align: left; }}
+td {{ border: 1px solid #ddd; padding: 4px 8px; }}
+tr:nth-child(even) {{ background: #f9f9f9; }}
+.footer {{ margin-top: 20px; font-size: 10px; color: #999; text-align: center; }}
+@media print {{ body {{ margin: 10mm; }} @page {{ size: landscape; }} }}
+</style></head><body>
+<h1>ORISUN IBUKUN (Owode Unit) — Monthly Attendance Summary</h1>
+<p class="sub">{_html.escape(month_name)} &nbsp;|&nbsp; Generated: {_html.escape(stamp)}</p>
+
+<div class="stats">
+<div class="stat-box"><div class="num">{total_meetings}</div><div class="lbl">Total Meetings</div></div>
+<div class="stat-box"><div class="num">{len(members)}</div><div class="lbl">Active Members</div></div>
+<div class="stat-box"><div class="num">{overall_rate:.1f}%</div><div class="lbl">Overall Attendance</div></div>
+<div class="stat-box"><div class="num">{total_fines:,.0f}</div><div class="lbl">Total Absence Fines</div></div>
+</div>
+
+<p><b>Best attendance:</b> {_html.escape(best_name)} ({best_rate:.0f}%) &nbsp;|&nbsp;
+<b>Lowest attendance:</b> {_html.escape(worst_name)} ({worst_rate:.0f}%)</p>
+
+<table>
+<tr><th>Member Name</th><th style="text-align:center;">Meetings</th><th style="text-align:center;">Present</th><th style="text-align:center;">Absent</th><th style="text-align:center;">Rate</th></tr>
+{rows_html}
+</table>
+
+<div class="footer">ORISUN IBUKUN Cooperative Management System</div>
+</body></html>"""
+
+        out = DB_DIR / "summary_print.html"
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(page)
+        webbrowser.open("file:///" + str(out).replace("\\", "/"))
