@@ -2,6 +2,7 @@
 import datetime
 from database.connection import get_connection
 from utils.helpers import generate_id
+from permissions import require_permission, PERM_REVERSE_TXN, PERM_SETTINGS_EDIT
 from constants import (
     TXN_STATUS_POSTED,
     TXN_STATUS_REVERSED,
@@ -420,6 +421,7 @@ def get_all_loan_members(status_filter: str = "All") -> list:
     return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 
+@require_permission(PERM_REVERSE_TXN)
 def reverse_transaction(transaction_id: str, reason: str, reversed_by: int,
                         conn=None):
     own_conn = conn is None
@@ -1275,6 +1277,7 @@ def record_hq_funding(amount: float, date: str = "", description: str = "",
     return txn_id
 
 
+@require_permission(PERM_SETTINGS_EDIT)
 def record_expense(amount: float, date: str = "", category: str = "",
                    description: str = "", payment_method: str = "Cash",
                    entered_by: int = None,

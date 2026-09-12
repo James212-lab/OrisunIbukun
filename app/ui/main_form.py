@@ -3,6 +3,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from database.connection import get_connection, close_connection
 from database.schema import get_setting
+from engines.backup_engine import auto_backup
+from permissions import has_permission, PERM_MEMBERS_MANAGE, PERM_ATTENDANCE, PERM_SAVINGS_EDIT, PERM_LOANS_MANAGE, PERM_REPORTS_VIEW, PERM_BACKUP_RESTORE, PERM_SETTINGS_EDIT
 from utils.helpers import format_currency, set_window_icon
 from session import SessionMixin
 import datetime
@@ -31,7 +33,8 @@ class MainForm(SessionMixin, tk.Tk):
         self._build_ui()
         self._setup_keyboard_shortcuts()
         self._log_login()
-        # SessionMixin already starts session with 20/5 min in its __init__
+        # Auto-backup + clean close on window X
+        self.protocol("WM_DELETE_WINDOW", self.logout)
 
     def _apply_theme(self):
         style = ttk.Style()
@@ -75,17 +78,19 @@ class MainForm(SessionMixin, tk.Tk):
         nav.pack_propagate(False)
 
         buttons = [
-            ("DASHBOARD", self._show_dashboard),
-            ("MEMBERS", self._open_members),
-            ("ATTENDANCE", self._open_attendance),
-            ("PAYMENTS", self._open_payments),
-            ("LOANS", self._open_loans),
-            ("REPORTS", self._open_reports),
-            ("BACKUP", self._open_backup),
-            ("SETTINGS", self._open_settings),
+            ("DASHBOARD", self._show_dashboard, None),
+            ("MEMBERS", self._open_members, PERM_MEMBERS_MANAGE),
+            ("ATTENDANCE", self._open_attendance, PERM_ATTENDANCE),
+            ("PAYMENTS", self._open_payments, PERM_SAVINGS_EDIT),
+            ("LOANS", self._open_loans, PERM_LOANS_MANAGE),
+            ("REPORTS", self._open_reports, PERM_REPORTS_VIEW),
+            ("BACKUP", self._open_backup, PERM_BACKUP_RESTORE),
+            ("SETTINGS", self._open_settings, PERM_SETTINGS_EDIT),
         ]
 
-        for text, cmd in buttons:
+        for text, cmd, perm in buttons:
+            if perm is not None and not has_permission(self.role_name, perm):
+                continue
             btn = tk.Button(nav, text=text, command=cmd, bg="#1565C0", fg="#FFFFFF",
                            font=("Segoe UI", 12, "bold"), relief=tk.FLAT, padx=10, pady=12,
                            activebackground="#0D47A1", activeforeground="#FFFFFF",
@@ -402,6 +407,10 @@ class MainForm(SessionMixin, tk.Tk):
             try:
                 if hasattr(self, '_cleanup_session'):
                     self._cleanup_session()
+            except Exception:
+                pass
+            try:
+                auto_backup()
             except Exception:
                 pass
             try:

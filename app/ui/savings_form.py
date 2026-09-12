@@ -15,6 +15,7 @@ from utils.helpers import format_currency, PaginationHelper
 from utils.date_picker import pick_date
 from errors import handle_error, safe_execute, ValidationError
 from constants import PASSBOOK_FEE_COLUMNS
+from permissions import has_permission, PERM_REVERSE_TXN
 
 
 BLUE = "#1565C0"
@@ -386,9 +387,10 @@ class SavingsForm(tk.Frame):
                                   bg=GREEN, fg=WHITE, relief="flat", padx=12, pady=4,
                                   command=self._show_edit_view)
         self.edit_btn.pack(side="right")
-        tk.Button(navbar, text="REVERSE", font=("Segoe UI", 10, "bold"),
-                  bg="#D32F2F", fg=WHITE, relief="flat", padx=12, pady=4,
-                  command=self._reverse_transaction_dialog).pack(side="right", padx=(0, 8))
+        if has_permission(self.current_user.get("role", ""), PERM_REVERSE_TXN):
+            tk.Button(navbar, text="REVERSE", font=("Segoe UI", 10, "bold"),
+                      bg="#D32F2F", fg=WHITE, relief="flat", padx=12, pady=4,
+                      command=self._reverse_transaction_dialog).pack(side="right", padx=(0, 8))
 
         info_frame = tk.Frame(c, bg=LIGHT_BLUE, padx=12, pady=8)
         info_frame.pack(fill="x", pady=(0, 8))

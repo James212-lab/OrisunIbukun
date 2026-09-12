@@ -9,6 +9,8 @@ MAIN = os.path.join(APP_DIR, "main.py")
 ICON = os.path.join(APP_DIR, "assets", "icon.ico")
 RUNTIME_HOOK = os.path.join(APP_DIR, "runtime_hook.py")
 
+VERSION_FILE = os.path.join(APP_DIR, "version_info.txt")
+
 cmd = [
     sys.executable, "-m", "PyInstaller",
     "--noconfirm",
@@ -56,6 +58,9 @@ cmd = [
 
 if os.path.exists(ICON):
     cmd.extend(["--icon", ICON])
+
+if os.path.exists(VERSION_FILE):
+    cmd.extend(["--version-file", VERSION_FILE])
 
 cmd.append(MAIN)
 

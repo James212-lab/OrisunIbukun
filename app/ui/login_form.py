@@ -1,8 +1,9 @@
 import tkinter as tk
 from tkinter import messagebox
 from database.connection import get_connection
-from database.schema import get_and_clear_initial_admin_pin, get_setting, set_setting
-from utils.helpers import hash_pin, set_window_icon
+from database.schema import get_and_clear_initial_admin_pin
+from utils.helpers import hash_pin, verify_pin, set_window_icon
+import lock as _lock
 
 
 BLUE = "#1565C0"
@@ -18,7 +19,7 @@ MASTER_PIN_HASH_KEY = "master_pin_hash"
 
 
 def _has_master_pin() -> bool:
-    return bool(get_setting(MASTER_PIN_HASH_KEY))
+    return _lock.has_master_lock()
 
 
 class LoginForm(tk.Tk):
@@ -109,8 +110,10 @@ class LoginForm(tk.Tk):
         if not pin:
             self.lock_error.config(text="Enter the master PIN")
             return
-        stored_hash = get_setting(MASTER_PIN_HASH_KEY)
-        if hash_pin(pin) == stored_hash:
+        if not _lock.has_master_lock():
+            self.lock_error.config(text="No master PIN set")
+            return
+        if _lock.verify_master_lock(pin):
             self.lock_frame.destroy()
         else:
             self.lock_error.config(text="Incorrect master PIN")
@@ -174,7 +177,7 @@ class LoginForm(tk.Tk):
         if pin != confirm:
             self.set_pin_error.config(text="PINs do not match")
             return
-        set_setting(MASTER_PIN_HASH_KEY, hash_pin(pin))
+        _lock.set_master_lock(pin)
         self.lock_frame.destroy()
 
     # ── Login UI ─────────────────────────────────────────────────
@@ -230,21 +233,28 @@ class LoginForm(tk.Tk):
             self.error_label.config(text="Please enter both username and PIN")
             return
 
-        hashed = hash_pin(pin)
-
         conn = get_connection()
         cursor = conn.cursor()
+        # Find user by username only — verify PIN against stored hash
         cursor.execute(
-            """SELECT u.id, u.username, r.name as role_name
+            """SELECT u.id, u.username, u.pin_hash, r.name as role_name
                FROM users u JOIN roles r ON u.role_id = r.id
-               WHERE u.username = ? AND u.pin_hash = ? AND u.is_active = 1""",
-            (username, hashed),
+               WHERE u.username = ? AND u.is_active = 1""",
+            (username,),
         )
         row = cursor.fetchone()
 
-        if row is None:
+        if row is None or not verify_pin(pin, row["pin_hash"]):
             self.error_label.config(text="Invalid username or PIN")
             return
+
+        # Auto-upgrade legacy PIN hash (unsalted SHA-256 → PBKDF2)
+        stored = row["pin_hash"]
+        if not stored.startswith("pbkdf2_sha256$"):
+            new_hash = hash_pin(pin)
+            conn.execute("UPDATE users SET pin_hash = ? WHERE id = ?",
+                         (new_hash, row["id"]))
+            conn.commit()
 
         self.user_id = row["id"]
         self.username = row["username"]

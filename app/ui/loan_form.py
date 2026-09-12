@@ -19,8 +19,8 @@ from errors import handle_error, safe_execute, ValidationError
 from constants import (
     LOAN_STATUS_APPLIED, LOAN_STATUS_APPROVED, LOAN_STATUS_DISBURSED,
     LOAN_STATUS_ACTIVE, LOAN_STATUS_OVERDUE, LOAN_STATUS_COMPLETED,
-    LOAN_ACTIVE_STATUSES, REPAY_MONTHLY, REPAY_WEEKLY,
 )
+from permissions import has_permission, PERM_REVERSE_TXN, PERM_LOANS_MANAGE
 
 
 BLUE = "#1565C0"
@@ -320,26 +320,30 @@ class LoanForm(tk.Frame):
         # Action buttons
         btn_frame = tk.Frame(c, bg=WHITE)
         btn_frame.pack(fill="x", pady=(8, 0))
-        self.btn_approve = tk.Button(btn_frame, text="Approve", font=("Segoe UI", 10, "bold"),
-                                     bg=GREEN, fg=WHITE, relief="flat", padx=10, pady=4,
-                                     command=self._approve_loan)
-        self.btn_approve.pack(side="left", padx=(0, 6))
-        self.btn_disburse = tk.Button(btn_frame, text="Disburse", font=("Segoe UI", 10, "bold"),
-                                      bg=ORANGE, fg=WHITE, relief="flat", padx=10, pady=4,
-                                      command=self._disburse_loan)
-        self.btn_disburse.pack(side="left", padx=(0, 6))
+        role = self.current_user.get("role", "")
+        if has_permission(role, PERM_LOANS_MANAGE):
+            self.btn_approve = tk.Button(btn_frame, text="Approve", font=("Segoe UI", 10, "bold"),
+                                         bg=GREEN, fg=WHITE, relief="flat", padx=10, pady=4,
+                                         command=self._approve_loan)
+            self.btn_approve.pack(side="left", padx=(0, 6))
+            self.btn_disburse = tk.Button(btn_frame, text="Disburse", font=("Segoe UI", 10, "bold"),
+                                          bg=ORANGE, fg=WHITE, relief="flat", padx=10, pady=4,
+                                          command=self._disburse_loan)
+            self.btn_disburse.pack(side="left", padx=(0, 6))
         tk.Button(btn_frame, text="Record Repayment", font=("Segoe UI", 10, "bold"),
                   bg=BLUE, fg=WHITE, relief="flat", padx=10, pady=4,
                   command=self._record_repayment_dialog).pack(side="left", padx=(0, 6))
-        tk.Button(btn_frame, text="Add Guarantor", font=("Segoe UI", 10),
-                  bg=LIGHT_BLUE, fg=BLUE, relief="flat", padx=8, pady=3,
-                  command=self._add_guarantor_dialog).pack(side="left", padx=(0, 6))
-        tk.Button(btn_frame, text="Upload Document", font=("Segoe UI", 10),
-                  bg=LIGHT_BLUE, fg=BLUE, relief="flat", padx=8, pady=3,
-                  command=self._upload_document_dialog).pack(side="left")
-        tk.Button(btn_frame, text="Reverse", font=("Segoe UI", 10, "bold"),
-                  bg="#D32F2F", fg=WHITE, relief="flat", padx=8, pady=3,
-                  command=self._reverse_loan_txn_dialog).pack(side="left", padx=(6, 0))
+        if has_permission(role, PERM_LOANS_MANAGE):
+            tk.Button(btn_frame, text="Add Guarantor", font=("Segoe UI", 10),
+                      bg=LIGHT_BLUE, fg=BLUE, relief="flat", padx=8, pady=3,
+                      command=self._add_guarantor_dialog).pack(side="left", padx=(0, 6))
+            tk.Button(btn_frame, text="Upload Document", font=("Segoe UI", 10),
+                      bg=LIGHT_BLUE, fg=BLUE, relief="flat", padx=8, pady=3,
+                      command=self._upload_document_dialog).pack(side="left")
+        if has_permission(role, PERM_REVERSE_TXN):
+            tk.Button(btn_frame, text="Reverse", font=("Segoe UI", 10, "bold"),
+                      bg="#D32F2F", fg=WHITE, relief="flat", padx=8, pady=3,
+                      command=self._reverse_loan_txn_dialog).pack(side="left", padx=(6, 0))
 
         # Guarantors
         tk.Label(c, text="Guarantors", font=("Segoe UI", 13, "bold"),

@@ -8,7 +8,8 @@ import tkinter.font as tkfont
 from constants import APP_VERSION, GITHUB_REPO
 from database.connection import get_connection
 from database.schema import get_setting, set_setting
-from utils.helpers import hash_pin
+from utils.helpers import hash_pin, verify_pin
+import lock as _lock
 
 MASTER_PIN_HASH_KEY = "master_pin_hash"
 UPDATE_UNLOCK_KEY = "__update_unlocked"
@@ -234,7 +235,7 @@ class SettingsForm(tk.Frame):
                                   pady=(5, 10))
 
         row += 1
-        has_mp = bool(get_setting(MASTER_PIN_HASH_KEY))
+        has_mp = _lock.has_master_lock()
         mp_status = "Set" if has_mp else "Not set"
         self.master_pin_status_var = tk.StringVar(value=mp_status)
         tk.Label(frame, text="Master PIN:", font=("Segoe UI", 11, "bold"),
@@ -276,7 +277,7 @@ class SettingsForm(tk.Frame):
         if not pin:
             return
         stored = self._get_user_pin_hash()
-        if hash_pin(pin) != stored:
+        if not verify_pin(pin, stored):
             messagebox.showerror("Incorrect PIN", "That PIN is wrong.")
             return
         self._update_unlocked = True
@@ -464,8 +465,7 @@ class SettingsForm(tk.Frame):
             old = cur_pin.get().strip()
             new = new_pin.get().strip()
             conf = conf_pin.get().strip()
-            stored = get_setting(MASTER_PIN_HASH_KEY)
-            if hash_pin(old) != stored:
+            if not _lock.verify_master_lock(old):
                 messagebox.showerror("Error", "Current master PIN is wrong.",
                                      parent=dialog)
                 return
@@ -478,7 +478,7 @@ class SettingsForm(tk.Frame):
                 messagebox.showerror("Error", "New PINs do not match.",
                                      parent=dialog)
                 return
-            set_setting(MASTER_PIN_HASH_KEY, hash_pin(new))
+            _lock.set_master_lock(new)
             messagebox.showinfo("Done", "Master PIN changed.", parent=dialog)
             dialog.destroy()
             self.master_pin_status_var.set("Set")
@@ -488,7 +488,7 @@ class SettingsForm(tk.Frame):
                   padx=15, pady=5, command=do_change).pack(pady=(12, 0))
 
     def _remove_master_pin(self):
-        if not get_setting(MASTER_PIN_HASH_KEY):
+        if not _lock.has_master_lock():
             messagebox.showinfo("Info", "No master PIN is set.")
             return
         pin = tk.simpledialog.askstring(
@@ -497,7 +497,7 @@ class SettingsForm(tk.Frame):
             show="*", parent=self)
         if not pin:
             return
-        if hash_pin(pin) != self._get_user_pin_hash():
+        if not verify_pin(pin, self._get_user_pin_hash()):
             messagebox.showerror("Incorrect PIN", "That PIN is wrong.")
             return
         if not messagebox.askyesno(
@@ -505,7 +505,7 @@ class SettingsForm(tk.Frame):
             "lock on startup."
         ):
             return
-        set_setting(MASTER_PIN_HASH_KEY, "")
+        _lock.remove_master_lock()
         self.master_pin_status_var.set("Not set")
         messagebox.showinfo("Done", "Master PIN removed.")
 

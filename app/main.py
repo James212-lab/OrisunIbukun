@@ -2,13 +2,39 @@
 import sys
 import os
 import traceback
+import logging
+import datetime
 import tkinter as tk
 from tkinter import messagebox
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+LOG_DIR = Path(os.environ.get("APPDATA", os.path.expanduser("~"))) / "OrisunIbukun" / "logs"
+LOG_PATH = LOG_DIR / "app.log"
+
+
+def _setup_logging():
+    """Configure rotating file + stderr logging."""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(str(LOG_PATH), encoding="utf-8")
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    ))
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(handler)
+
+
+def _global_excepthook(exc_type, exc_value, exc_tb):
+    """Log unhandled exceptions to logs/app.log."""
+    tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    logging.getLogger("crash").error("Unhandled exception:\n%s", tb_text)
+    write_crash_log(tb_text)
+
 from database.schema import create_schema, get_setting
 from database.connection import close_connection, get_connection
+from mutex import SingleInstanceGuard
 
 
 def validate_startup() -> bool:
@@ -35,23 +61,16 @@ def validate_startup() -> bool:
         return False
 
 
-_INSTANCE_SOCKET = None
+_INSTANCE_GUARD = None
 
-def ensure_single_instance(port: int = 47653):
-    """Prevent multiple app instances (which can lock/corrupt migrations).
 
-    Returns the bound socket (must be kept alive) or None if another
-    instance is already running.
-    """
-    import socket
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        s.bind(("127.0.0.1", port))
-    except OSError:
+def ensure_single_instance():
+    """Prevent multiple app instances using a Windows named mutex."""
+    global _INSTANCE_GUARD
+    _INSTANCE_GUARD = SingleInstanceGuard()
+    if not _INSTANCE_GUARD.acquire():
         return None
-    global _INSTANCE_SOCKET
-    _INSTANCE_SOCKET = s
-    return s
+    return _INSTANCE_GUARD
 
 
 def write_crash_log(text: str) -> str:
@@ -88,12 +107,16 @@ def show_error_and_exit(title: str, message: str) -> None:
 
 
 def main():
+    import atexit
+    sys.excepthook = _global_excepthook
+    _setup_logging()
     try:
         if ensure_single_instance() is None:
             show_error_and_exit(
                 "Already Running",
                 "ORISUN IBUKUN is already running.\n\nPlease use the open window (check the taskbar) instead of starting a new one."
             )
+        atexit.register(lambda: _INSTANCE_GUARD.release() if _INSTANCE_GUARD else None)
         print("Creating/updating database schema...")
         create_schema()
         

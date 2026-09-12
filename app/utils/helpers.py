@@ -18,7 +18,33 @@ def generate_id(prefix: str = "TX") -> str:
 
 
 def hash_pin(pin: str) -> str:
-    return hashlib.sha256(pin.encode()).hexdigest()
+    """Hash a PIN with PBKDF2-HMAC-SHA256. Returns format: pbkdf2_sha256$<iter>$<salt>$<hash>."""
+    iterations = 100_000
+    salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", pin.encode(), salt, iterations)
+    return f"pbkdf2_sha256${iterations}${salt.hex()}${dk.hex()}"
+
+
+def verify_pin(pin: str, stored: str) -> bool:
+    """Verify a PIN against a stored hash.
+
+    Supports both the new PBKDF2 format and the legacy unsalted SHA-256.
+    When a legacy match is found, the caller should re-hash and update the
+    DB — this function does not do that automatically (keeps it side-effect free).
+    """
+    if stored.startswith("pbkdf2_sha256$"):
+        parts = stored.split("$")
+        if len(parts) != 4:
+            return False
+        iterations = int(parts[1])
+        salt = bytes.fromhex(parts[2])
+        expected = parts[3]
+        dk = hashlib.pbkdf2_hmac("sha256", pin.encode(), salt, iterations)
+        return dk.hex() == expected
+    # Legacy: unsalted SHA-256 (64 hex chars)
+    if len(stored) == 64 and all(c in "0123456789abcdef" for c in stored):
+        return hashlib.sha256(pin.encode()).hexdigest() == stored
+    return False
 
 
 def format_currency(amount: float) -> str:

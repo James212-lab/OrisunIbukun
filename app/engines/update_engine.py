@@ -214,6 +214,27 @@ def can_update() -> bool:
     return getattr(sys, "frozen", False) is True
 
 
+def check_writability() -> tuple[bool, str]:
+    """Check if the exe's directory is writable. Returns (ok, message)."""
+    if not can_update():
+        return True, "Source mode — no writability check needed."
+    exe_dir = os.path.dirname(sys.executable)
+    test_file = os.path.join(exe_dir, "._orisun_write_test")
+    try:
+        with open(test_file, "w") as f:
+            f.write("test")
+        os.unlink(test_file)
+        return True, f"Directory writable: {exe_dir}"
+    except PermissionError:
+        return False, (
+            f"Cannot write to: {exe_dir}\n\n"
+            "Please move the exe to a user-writable folder "
+            "(e.g. Documents or Desktop) and run from there."
+        )
+    except Exception as e:
+        return False, f"Write test failed: {e}"
+
+
 def apply_update(downloaded_path: str) -> bool:
     """Replace the running exe via a detached batch script.
 
