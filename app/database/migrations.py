@@ -88,6 +88,43 @@ MIGRATIONS = {
         ALTER TABLE members ADD COLUMN id_number TEXT;
         ALTER TABLE members ADD COLUMN photo_path TEXT;
     """,
+    9: """
+        -- Absentism fines audit log
+        CREATE TABLE IF NOT EXISTS absentism_fines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            member_id INTEGER NOT NULL REFERENCES members(id),
+            meeting_id INTEGER NOT NULL REFERENCES meetings(id),
+            amount REAL NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'Owed',
+            amount_paid REAL NOT NULL DEFAULT 0,
+            entered_by INTEGER REFERENCES users(id),
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+    """,
+    10: """
+        -- External guarantors + charge payment audit trail
+        CREATE TABLE IF NOT EXISTS external_guarantors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            loan_id INTEGER NOT NULL REFERENCES loans(id),
+            full_name TEXT NOT NULL,
+            phone TEXT,
+            address TEXT,
+            id_type TEXT,
+            id_number TEXT,
+            photo_path TEXT,
+            relationship TEXT,
+            guarantee_amount REAL DEFAULT 0,
+            date_guaranteed TEXT DEFAULT (datetime('now')),
+            status TEXT DEFAULT 'Active'
+        );
+        CREATE TABLE IF NOT EXISTS charge_payment_applications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            txn_id TEXT NOT NULL,
+            charge_id TEXT NOT NULL,
+            amount_applied REAL NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+    """,
 }
 
 

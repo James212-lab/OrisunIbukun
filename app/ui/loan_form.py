@@ -7,9 +7,10 @@ from database.connection import get_connection
 from database.schema import get_setting
 from engines.transaction_engine import (
     create_loan, approve_loan, disburse_loan, record_repayment,
-    add_guarantor, add_loan_document, list_loan_documents,
+    add_guarantor, add_external_guarantor, get_loan_guarantors,
+    add_loan_document, list_loan_documents,
     get_member_loans, get_all_loan_members,
-    get_member_financial_summary,
+    get_member_financial_summary, reverse_transaction,
 )
 from utils.validators import validate_amount
 from utils.helpers import format_currency, PaginationHelper
@@ -114,6 +115,20 @@ class LoanForm(tk.Frame):
                  font=("Segoe UI", 9), fg="#666666", bg=WHITE, anchor="w"
                  ).pack(fill="x", padx=15)
 
+        pag_frame = tk.Frame(self.register_list_frame, bg=WHITE, padx=15)
+        pag_frame.pack(fill="x", pady=(8, 12), side="bottom")
+        self.prev_btn = tk.Button(pag_frame, text="< Previous", font=("Segoe UI", 9),
+                                  bg=LIGHT_BLUE, fg=BLUE, relief="flat", padx=8, pady=3,
+                                  state="disabled", command=self._prev_page)
+        self.prev_btn.pack(side="left")
+        self.page_info_var = tk.StringVar(value="Page 1 of 1")
+        tk.Label(pag_frame, textvariable=self.page_info_var, font=("Segoe UI", 9),
+                 fg="#666666", bg=WHITE).pack(side="left", padx=12)
+        self.next_btn = tk.Button(pag_frame, text="Next >", font=("Segoe UI", 9),
+                                  bg=LIGHT_BLUE, fg=BLUE, relief="flat", padx=8, pady=3,
+                                  state="disabled", command=self._next_page)
+        self.next_btn.pack(side="left")
+
         cols_frame = tk.Frame(self.register_list_frame, bg=WHITE, padx=15)
         cols_frame.pack(fill="both", expand=True)
 
@@ -145,20 +160,6 @@ class LoanForm(tk.Frame):
         style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
 
         self.reg_tree.bind("<Double-1>", lambda e: self._on_register_select())
-
-        pag_frame = tk.Frame(self.register_list_frame, bg=WHITE, padx=15)
-        pag_frame.pack(fill="x", pady=(8, 12))
-        self.prev_btn = tk.Button(pag_frame, text="< Previous", font=("Segoe UI", 9),
-                                  bg=LIGHT_BLUE, fg=BLUE, relief="flat", padx=8, pady=3,
-                                  state="disabled", command=self._prev_page)
-        self.prev_btn.pack(side="left")
-        self.page_info_var = tk.StringVar(value="Page 1 of 1")
-        tk.Label(pag_frame, textvariable=self.page_info_var, font=("Segoe UI", 9),
-                 fg="#666666", bg=WHITE).pack(side="left", padx=12)
-        self.next_btn = tk.Button(pag_frame, text="Next >", font=("Segoe UI", 9),
-                                  bg=LIGHT_BLUE, fg=BLUE, relief="flat", padx=8, pady=3,
-                                  state="disabled", command=self._next_page)
-        self.next_btn.pack(side="left")
 
         self._load_all_members()
 
@@ -250,8 +251,10 @@ class LoanForm(tk.Frame):
         _scroll.pack(side="right", fill="y")
         self._detail_container = tk.Frame(_canvas, bg=WHITE, padx=15, pady=10)
         _win = _canvas.create_window((0, 0), window=self._detail_container, anchor="nw")
-        self._detail_container.bind("<Configure>",
-                                   lambda e: _canvas.configure(scrollregion=_canvas.bbox("all")))
+        self._detail_container.bind(
+            "<Configure>",
+            lambda e: _canvas.configure(scrollregion=_canvas.bbox("all"))
+            if _canvas.bbox("all") else None)
         _canvas.bind("<Configure>",
                      lambda e: _canvas.itemconfig(_win, width=e.width))
         _canvas.bind("<Enter>", lambda e: _canvas.bind_all(
@@ -334,6 +337,9 @@ class LoanForm(tk.Frame):
         tk.Button(btn_frame, text="Upload Document", font=("Segoe UI", 10),
                   bg=LIGHT_BLUE, fg=BLUE, relief="flat", padx=8, pady=3,
                   command=self._upload_document_dialog).pack(side="left")
+        tk.Button(btn_frame, text="Reverse", font=("Segoe UI", 10, "bold"),
+                  bg="#D32F2F", fg=WHITE, relief="flat", padx=8, pady=3,
+                  command=self._reverse_loan_txn_dialog).pack(side="left", padx=(6, 0))
 
         # Guarantors
         tk.Label(c, text="Guarantors", font=("Segoe UI", 13, "bold"),
@@ -453,13 +459,15 @@ class LoanForm(tk.Frame):
 
         # Load guarantors
         self.guar_tree.delete(*self.guar_tree.get_children())
-        guars = conn.execute(
-            """SELECT lg.*, m.full_name FROM loan_guarantors lg
-               JOIN members m ON lg.guarantor_member_id = m.id
-               WHERE lg.loan_id = ?""", (loan_db_id,)).fetchall()
-        for g in guars:
+        guar_data = get_loan_guarantors(loan_db_id)
+        for g in guar_data["members"]:
             self.guar_tree.insert("", "end",
-                                  values=(g["full_name"],
+                                  values=(f"{g['full_name']} (Member)",
+                                          format_currency(g["guarantee_amount"]),
+                                          g["status"]))
+        for g in guar_data["external"]:
+            self.guar_tree.insert("", "end",
+                                  values=(f"{g['full_name']} ({g['relationship']})",
                                           format_currency(g["guarantee_amount"]),
                                           g["status"]))
 
@@ -580,21 +588,48 @@ class LoanForm(tk.Frame):
             return
         win = tk.Toplevel(self.register_detail_frame)
         win.title("Add Guarantor")
-        win.geometry("400x250")
+        win.geometry("700x600")
+        win.minsize(600, 500)
         win.configure(bg=WHITE)
         win.transient(self.register_detail_frame)
         win.grab_set()
 
-        tk.Label(win, text="Search Member (name or ID):", font=("Segoe UI", 11),
-                 bg=WHITE).pack(padx=15, pady=(15, 5), anchor="w")
-        search_var = tk.StringVar()
-        tk.Entry(win, textvariable=search_var, font=("Segoe UI", 11),
-                 width=30, relief="solid", bd=1).pack(padx=15, anchor="w")
+        # Canvas + scrollbar for scrollable fields
+        canvas = tk.Canvas(win, bg=WHITE, highlightthickness=0)
+        vsb = tk.Scrollbar(win, orient="vertical", command=canvas.yview)
+        scroll_frame = tk.Frame(canvas, bg=WHITE)
+        scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
 
-        result_label = tk.Label(win, text="", font=("Segoe UI", 10),
+        # Bind mouse-wheel scrolling
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        mode_var = tk.StringVar(value="member")
+        mode_frame = tk.Frame(scroll_frame, bg=WHITE)
+        mode_frame.pack(fill="x", padx=15, pady=(10, 0))
+        tk.Radiobutton(mode_frame, text="Member", variable=mode_var, value="member",
+                       bg=WHITE, font=("Segoe UI", 10),
+                       command=lambda: _toggle_mode("member")).pack(side="left")
+        tk.Radiobutton(mode_frame, text="Non-Member", variable=mode_var, value="external",
+                       bg=WHITE, font=("Segoe UI", 10),
+                       command=lambda: _toggle_mode("external")).pack(side="left", padx=(12, 0))
+
+        member_frame = tk.Frame(scroll_frame, bg=WHITE)
+        external_frame = tk.Frame(scroll_frame, bg=WHITE)
+
+        tk.Label(member_frame, text="Search Member (name or ID):", font=("Segoe UI", 11),
+                 bg=WHITE).pack(padx=15, pady=(10, 5), anchor="w")
+        search_var = tk.StringVar()
+        tk.Entry(member_frame, textvariable=search_var, font=("Segoe UI", 11),
+                 width=30, relief="solid", bd=1).pack(padx=15, anchor="w")
+        result_label = tk.Label(member_frame, text="", font=("Segoe UI", 10),
                                 fg="#666666", bg=WHITE)
         result_label.pack(padx=15, anchor="w", pady=(5, 0))
-
         found_member = [None]
 
         def search_member():
@@ -613,33 +648,106 @@ class LoanForm(tk.Frame):
                 found_member[0] = None
                 result_label.config(text="Member not found.")
 
-        tk.Button(win, text="Search", font=("Segoe UI", 9, "bold"),
+        tk.Button(member_frame, text="Search", font=("Segoe UI", 9, "bold"),
                   bg=BLUE, fg=WHITE, relief="flat", padx=6, pady=2,
                   command=search_member).pack(padx=15, anchor="w", pady=(5, 0))
 
-        tk.Label(win, text="Guarantee Amount:", font=("Segoe UI", 11),
+        ext_name_var = tk.StringVar()
+        ext_phone_var = tk.StringVar()
+        ext_addr_var = tk.StringVar()
+        ext_id_type_var = tk.StringVar()
+        ext_id_num_var = tk.StringVar()
+        ext_rel_var = tk.StringVar()
+
+        ext_fields = [
+            ("Full Name *:", ext_name_var), ("Phone:", ext_phone_var),
+            ("Address:", ext_addr_var), ("ID Type:", ext_id_type_var),
+            ("ID Number:", ext_id_num_var), ("Relationship *:", ext_rel_var),
+        ]
+        for label, var in ext_fields:
+            tk.Label(external_frame, text=label, font=("Segoe UI", 10),
+                     bg=WHITE).pack(padx=15, pady=(4, 0), anchor="w")
+            tk.Entry(external_frame, textvariable=var, font=("Segoe UI", 10),
+                     width=30, relief="solid", bd=1).pack(padx=15, anchor="w")
+
+        ext_photo_var = tk.StringVar(value="")
+
+        def pick_photo():
+            path = filedialog.askopenfilename(
+                title="Select Passport Photo",
+                filetypes=[("Images", "*.jpg;*.jpeg;*.png")])
+            if path:
+                ext_photo_var.set(path)
+
+        photo_row = tk.Frame(external_frame, bg=WHITE)
+        photo_row.pack(fill="x", padx=15, pady=(4, 0))
+        tk.Label(photo_row, text="Passport Photo:", font=("Segoe UI", 10),
+                 bg=WHITE).pack(side="left")
+        tk.Button(photo_row, text="Browse", font=("Segoe UI", 9),
+                  bg=LIGHT_BLUE, fg=BLUE, relief="flat",
+                  command=pick_photo).pack(side="left", padx=(6, 0))
+
+        tk.Label(scroll_frame, text="Guarantee Amount:", font=("Segoe UI", 11),
                  bg=WHITE).pack(padx=15, pady=(10, 5), anchor="w")
         amt_var = tk.StringVar()
-        tk.Entry(win, textvariable=amt_var, font=("Segoe UI", 11),
+        tk.Entry(scroll_frame, textvariable=amt_var, font=("Segoe UI", 11),
                  width=20, relief="solid", bd=1).pack(padx=15, anchor="w")
 
+        def _toggle_mode(mode):
+            member_frame.pack_forget()
+            external_frame.pack_forget()
+            if mode == "member":
+                member_frame.pack(fill="x", after=mode_frame)
+            else:
+                external_frame.pack(fill="x", after=mode_frame)
+
         def submit():
-            if not found_member[0]:
-                messagebox.showerror("Error", "Search and select a member first.")
-                return
+            # Unbind mouse-wheel on close
+            canvas.unbind_all("<MouseWheel>")
             try:
                 amt = float(amt_var.get().strip().replace(",", "").replace("₦", ""))
             except ValueError:
                 messagebox.showerror("Error", "Enter a valid amount.")
                 return
-            add_guarantor(self._selected_loan_db_id, found_member[0], amt)
+            if mode_var.get() == "member":
+                if not found_member[0]:
+                    messagebox.showerror("Error", "Search and select a member first.")
+                    return
+                add_guarantor(self._selected_loan_db_id, found_member[0], amt)
+            else:
+                name = ext_name_var.get().strip()
+                rel = ext_rel_var.get().strip()
+                if not name or not rel:
+                    messagebox.showerror("Error", "Full Name and Relationship are required.")
+                    return
+                photo_path = ext_photo_var.get()
+                if photo_path:
+                    import shutil as _shutil
+                    from database.connection import DB_DIR
+                    docs_dir = DB_DIR / "documents"
+                    docs_dir.mkdir(parents=True, exist_ok=True)
+                    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    ext = os.path.splitext(photo_path)[1] or ".jpg"
+                    dest = docs_dir / f"guarantor_{stamp}{ext}"
+                    _shutil.copy2(photo_path, dest)
+                    photo_path = str(dest)
+                add_external_guarantor(
+                    self._selected_loan_db_id,
+                    full_name=name, phone=ext_phone_var.get().strip(),
+                    address=ext_addr_var.get().strip(),
+                    id_type=ext_id_type_var.get().strip(),
+                    id_number=ext_id_num_var.get().strip(),
+                    photo_path=photo_path, relationship=rel,
+                    guarantee_amount=amt)
             messagebox.showinfo("Added", "Guarantor added.")
             win.destroy()
             self._load_single_loan_detail(self._selected_loan_db_id)
 
-        tk.Button(win, text="Add Guarantor", font=("Segoe UI", 11, "bold"),
+        tk.Button(scroll_frame, text="Add Guarantor", font=("Segoe UI", 11, "bold"),
                   bg=GREEN, fg=WHITE, relief="flat", padx=12, pady=4,
-                  command=submit).pack(pady=15)
+                  command=submit).pack(pady=12)
+
+        _toggle_mode("member")
 
     def _upload_document_dialog(self):
         if not self._selected_loan_db_id:
@@ -664,6 +772,107 @@ class LoanForm(tk.Frame):
         except Exception as ex:
             messagebox.showerror("Error", str(ex))
 
+    def _reverse_loan_txn_dialog(self):
+        if not self._selected_loan_db_id:
+            messagebox.showwarning("No Loan", "Select a loan first.")
+            return
+        conn = get_connection()
+        loan = conn.execute("SELECT member_id FROM loans WHERE id = ?",
+                            (self._selected_loan_db_id,)).fetchone()
+        if not loan:
+            return
+        member_id = loan["member_id"]
+        win = tk.Toplevel(self.register_detail_frame)
+        win.title("Reverse Loan Transaction")
+        win.geometry("700x550")
+        win.minsize(700, 500)
+        win.configure(bg=WHITE)
+        win.transient(self.register_detail_frame)
+        win.grab_set()
+
+        tk.Label(win, text="Select a Posted transaction to reverse:",
+                 font=("Segoe UI", 11, "bold"), fg=BLUE, bg=WHITE
+                 ).pack(padx=15, pady=(12, 5), anchor="w")
+
+        # Action bar packed BOTTOM first so it never gets clipped
+        reason_var = tk.StringVar()
+        action_frame = tk.Frame(win, bg=WHITE)
+        action_frame.pack(side="bottom", fill="x", padx=15, pady=(6, 10))
+
+        reason_frame = tk.Frame(action_frame, bg=WHITE)
+        reason_frame.pack(fill="x")
+        tk.Label(reason_frame, text="Reason:", font=("Segoe UI", 10),
+                 bg=WHITE).pack(side="left")
+        tk.Entry(reason_frame, textvariable=reason_var, font=("Segoe UI", 10),
+                 width=40, relief="solid", bd=1).pack(side="left", padx=(6, 0))
+
+        def do_reverse():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showwarning("Select", "Pick a transaction first.")
+                return
+            txn_id = sel[0]
+            reason = reason_var.get().strip()
+            if not reason:
+                messagebox.showwarning("Reason", "Enter a reason for reversal.")
+                return
+            try:
+                reverse_transaction(txn_id, reason,
+                                    self.current_user.get("id"))
+                messagebox.showinfo("Reversed", "Transaction reversed successfully.")
+                win.destroy()
+                self._load_single_loan_detail(self._selected_loan_db_id)
+            except Exception as ex:
+                messagebox.showerror("Error", str(ex))
+
+        tk.Button(action_frame, text="Reverse Selected", font=("Segoe UI", 11, "bold"),
+                  bg="#D32F2F", fg=WHITE, relief="flat", padx=12, pady=4,
+                  command=do_reverse).pack(pady=(6, 0))
+
+        # Tree fills remaining space above the action bar
+        cols = ("txn_id", "date", "type", "amount", "description")
+        tree = ttk.Treeview(win, columns=cols, show="headings", height=12)
+        tree.heading("txn_id", text="Txn ID")
+        tree.heading("date", text="Date")
+        tree.heading("type", text="Type")
+        tree.heading("amount", text="Amount")
+        tree.heading("description", text="Description")
+        tree.column("txn_id", width=90)
+        tree.column("date", width=80)
+        tree.column("type", width=110)
+        tree.column("amount", width=90, anchor="e")
+        tree.column("description", width=200)
+        vsb = ttk.Scrollbar(win, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side="left", padx=15, fill="both", expand=True)
+        vsb.pack(side="right", fill="y", padx=(0, 15))
+
+        txns = conn.execute(
+            """SELECT transaction_id, date, transaction_type, amount, description
+               FROM transactions
+               WHERE member_id = ? AND status = 'Posted'
+               ORDER BY date DESC, id DESC LIMIT 50""",
+            (member_id,),
+        ).fetchall()
+        for t in txns:
+            tree.insert("", "end", iid=t["transaction_id"],
+                        values=(t["transaction_id"], t["date"],
+                                t["transaction_type"],
+                                format_currency(t["amount"] or 0),
+                                (t["description"] or "")[:50]))
+
+        # Center over parent and ensure visibility
+        win.update_idletasks()
+        pw = self.register_detail_frame.winfo_width()
+        ph = self.register_detail_frame.winfo_height()
+        px = self.register_detail_frame.winfo_rootx()
+        py = self.register_detail_frame.winfo_rooty()
+        wx = px + max(0, (pw - 700) // 2)
+        wy = py + max(0, (ph - 550) // 2)
+        win.geometry(f"700x550+{wx}+{wy}")
+        win.lift()
+        win.focus_force()
+
     # ── NEW LOAN TAB ──────────────────────────────────────────────
 
     def _build_new_loan_tab(self):
@@ -675,7 +884,8 @@ class LoanForm(tk.Frame):
         container = tk.Frame(canvas, bg=WHITE, padx=20, pady=15)
         win = canvas.create_window((0, 0), window=container, anchor="nw")
         container.bind("<Configure>",
-                       lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+                       lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+                       if canvas.bbox("all") else None)
         canvas.bind("<Configure>",
                     lambda e: canvas.itemconfig(win, width=e.width))
         canvas.bind("<Enter>", lambda e: canvas.bind_all(

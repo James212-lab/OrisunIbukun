@@ -11,6 +11,7 @@ TXN_ENTRANCE_FEE = "Entrance Fee"
 TXN_CHARGE_PAYMENT = "Charge Payment"
 TXN_MINUTES = "Minutes"
 TXN_OTHER = "Other"
+TXN_HQ_FUNDING = "Headquarters Funding"
 
 # Transaction Status
 TXN_STATUS_POSTED = "Posted"
@@ -103,3 +104,7 @@ REPAY_WEEKLY = "Weekly"
 # Database
 DB_NAME = "orisun_ibukun.db"
 BACKUP_DIR_NAME = "backups"
+
+# App Version & Update (hardcoded — not user-editable)
+APP_VERSION = "1.1.0"
+GITHUB_REPO = "James212-lab/OrisunIbukun"

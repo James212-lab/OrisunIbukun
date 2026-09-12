@@ -6,8 +6,9 @@ from database.schema import get_setting
 from engines.transaction_engine import (
     record_savings, record_charge_payment,
     record_other_payment, record_withdrawal,
+    record_hq_funding, record_expense,
     get_member_financial_summary, get_member_passbook,
-    update_passbook_charges,
+    save_passbook_input, reverse_transaction,
 )
 from utils.validators import validate_amount
 from utils.helpers import format_currency, PaginationHelper
@@ -88,10 +89,27 @@ class SavingsForm(tk.Frame):
         tk.Button(top_bar, text="Search", font=("Segoe UI", 10, "bold"),
                   bg=BLUE, fg=WHITE, relief="flat", padx=8, pady=3,
                   command=self._filter_members).pack(side="right", padx=(6, 0))
+        tk.Button(top_bar, text="Record In / Out", font=("Segoe UI", 10, "bold"),
+                  bg=GREEN, fg=WHITE, relief="flat", padx=10, pady=3,
+                  command=self._open_finance_dialog).pack(side="right", padx=(6, 0))
 
         self.status_var = tk.StringVar(value="")
         tk.Label(self.list_frame, textvariable=self.status_var, font=("Segoe UI", 9),
                  fg="#666666", bg=WHITE, anchor="w").pack(fill="x", padx=15)
+
+        pag_frame = tk.Frame(self.list_frame, bg=WHITE, padx=15)
+        pag_frame.pack(fill="x", pady=(8, 12), side="bottom")
+        self.prev_btn = tk.Button(pag_frame, text="< Previous", font=("Segoe UI", 9),
+                                  bg=LIGHT_BLUE, fg=BLUE, relief="flat", padx=8, pady=3,
+                                  state="disabled", command=self._prev_page)
+        self.prev_btn.pack(side="left")
+        self.page_info_var = tk.StringVar(value="Page 1 of 1")
+        tk.Label(pag_frame, textvariable=self.page_info_var, font=("Segoe UI", 9),
+                 fg="#666666", bg=WHITE).pack(side="left", padx=12)
+        self.next_btn = tk.Button(pag_frame, text="Next >", font=("Segoe UI", 9),
+                                  bg=LIGHT_BLUE, fg=BLUE, relief="flat", padx=8, pady=3,
+                                  state="disabled", command=self._next_page)
+        self.next_btn.pack(side="left")
 
         cols_frame = tk.Frame(self.list_frame, bg=WHITE, padx=15)
         cols_frame.pack(fill="both", expand=True)
@@ -125,20 +143,6 @@ class SavingsForm(tk.Frame):
 
         self.tree.bind("<Double-1>", lambda e: self._on_tree_select())
 
-        pag_frame = tk.Frame(self.list_frame, bg=WHITE, padx=15)
-        pag_frame.pack(fill="x", pady=(8, 12))
-        self.prev_btn = tk.Button(pag_frame, text="< Previous", font=("Segoe UI", 9),
-                                  bg=LIGHT_BLUE, fg=BLUE, relief="flat", padx=8, pady=3,
-                                  state="disabled", command=self._prev_page)
-        self.prev_btn.pack(side="left")
-        self.page_info_var = tk.StringVar(value="Page 1 of 1")
-        tk.Label(pag_frame, textvariable=self.page_info_var, font=("Segoe UI", 9),
-                 fg="#666666", bg=WHITE).pack(side="left", padx=12)
-        self.next_btn = tk.Button(pag_frame, text="Next >", font=("Segoe UI", 9),
-                                  bg=LIGHT_BLUE, fg=BLUE, relief="flat", padx=8, pady=3,
-                                  state="disabled", command=self._next_page)
-        self.next_btn.pack(side="left")
-
         self._load_all_members()
 
     def _on_tree_select(self):
@@ -147,6 +151,100 @@ class SavingsForm(tk.Frame):
             return
         db_id = int(sel[0])
         self._show_detail(db_id)
+
+    def _open_finance_dialog(self):
+        """Open Toplevel dialog for recording non-member IN/OUT entries."""
+        dlg = tk.Toplevel(self)
+        dlg.title("Record In / Out Entry")
+        dlg.geometry("450x420")
+        dlg.resizable(False, False)
+        dlg.configure(bg=WHITE)
+
+        tk.Label(dlg, text="Record In / Out Entry", font=("Segoe UI", 14, "bold"),
+                 fg=BLUE, bg=WHITE).pack(pady=(15, 10))
+
+        # Entry type
+        tk.Label(dlg, text="Entry Type", font=("Segoe UI", 10), bg=WHITE).pack(anchor=tk.W, padx=20)
+        entry_type_var = tk.StringVar(value="HQ Funding")
+        type_frame = tk.Frame(dlg, bg=WHITE)
+        type_frame.pack(fill="x", padx=20, pady=(0, 8))
+        for val in ["HQ Funding", "Expense", "HQ Remittance"]:
+            tk.Radiobutton(type_frame, text=val, variable=entry_type_var, value=val,
+                           font=("Segoe UI", 10), bg=WHITE).pack(side="left", padx=(0, 10))
+
+        # Amount
+        tk.Label(dlg, text="Amount", font=("Segoe UI", 10), bg=WHITE).pack(anchor=tk.W, padx=20)
+        amount_var = tk.StringVar()
+        tk.Entry(dlg, textvariable=amount_var, font=("Segoe UI", 11),
+                 relief="solid", bd=1).pack(fill="x", padx=20, pady=(0, 8))
+
+        # Date
+        tk.Label(dlg, text="Date", font=("Segoe UI", 10), bg=WHITE).pack(anchor=tk.W, padx=20)
+        date_frame = tk.Frame(dlg, bg=WHITE)
+        date_frame.pack(fill="x", padx=20, pady=(0, 8))
+        date_var = tk.StringVar(value=datetime.date.today().strftime("%Y-%m-%d"))
+        tk.Entry(date_frame, textvariable=date_var, font=("Segoe UI", 11),
+                 relief="solid", bd=1, width=16).pack(side="left")
+        tk.Button(date_frame, text="Pick", font=("Segoe UI", 9), bg=LIGHT_BLUE, fg=BLUE,
+                  relief="flat", command=lambda: pick_date(dlg, date_var)).pack(side="left", padx=6)
+
+        # Description
+        tk.Label(dlg, text="Description", font=("Segoe UI", 10), bg=WHITE).pack(anchor=tk.W, padx=20)
+        desc_var = tk.StringVar()
+        tk.Entry(dlg, textvariable=desc_var, font=("Segoe UI", 11),
+                 relief="solid", bd=1).pack(fill="x", padx=20, pady=(0, 8))
+
+        # Category (only for Expense)
+        cat_label = tk.Label(dlg, text="Category", font=("Segoe UI", 10), bg=WHITE)
+        cat_label.pack(anchor=tk.W, padx=20)
+        cat_var = tk.StringVar(value="General")
+        cat_entry = tk.Entry(dlg, textvariable=cat_var, font=("Segoe UI", 11),
+                             relief="solid", bd=1)
+        cat_entry.pack(fill="x", padx=20, pady=(0, 8))
+
+        def _on_type_change(*_args):
+            t = entry_type_var.get()
+            if t == "Expense":
+                cat_label.pack(anchor=tk.W, padx=20)
+                cat_entry.pack(fill="x", padx=20, pady=(0, 8))
+            else:
+                cat_label.pack_forget()
+                cat_entry.pack_forget()
+
+        entry_type_var.trace_add("write", _on_type_change)
+        _on_type_change()
+
+        def _submit():
+            etype = entry_type_var.get()
+            try:
+                amt = validate_amount(amount_var.get())
+            except Exception as e:
+                messagebox.showerror("Invalid", str(e), parent=dlg)
+                return
+            if amt <= 0:
+                messagebox.showerror("Invalid", "Amount must be > 0", parent=dlg)
+                return
+            date_val = date_var.get().strip()
+            desc = desc_var.get().strip()
+            try:
+                if etype == "HQ Funding":
+                    record_hq_funding(amt, date=date_val, description=desc,
+                                      entered_by=self.current_user["id"])
+                elif etype == "Expense":
+                    record_expense(amt, date=date_val, category=cat_var.get().strip(),
+                                   description=desc, entered_by=self.current_user["id"])
+                elif etype == "HQ Remittance":
+                    from engines.transaction_engine import record_remittance
+                    record_remittance(amt, date=date_val, description=desc,
+                                      entered_by=self.current_user["id"])
+                messagebox.showinfo("Recorded", f"{etype} of {format_currency(amt)} recorded.", parent=dlg)
+                dlg.destroy()
+                self._load_members_page()
+            except Exception as e:
+                messagebox.showerror("Error", str(e), parent=dlg)
+
+        tk.Button(dlg, text="Save", font=("Segoe UI", 11, "bold"), bg=GREEN, fg=WHITE,
+                  relief="flat", padx=20, pady=6, command=_submit).pack(pady=15)
 
     def _load_all_members(self):
         self._pagination = PaginationHelper(page_size=50)
@@ -263,8 +361,10 @@ class SavingsForm(tk.Frame):
         _scroll.pack(side="right", fill="y")
         self._detail_container = tk.Frame(_canvas, bg=WHITE, padx=15, pady=10)
         _win = _canvas.create_window((0, 0), window=self._detail_container, anchor="nw")
-        self._detail_container.bind("<Configure>",
-                                   lambda e: _canvas.configure(scrollregion=_canvas.bbox("all")))
+        self._detail_container.bind(
+            "<Configure>",
+            lambda e: _canvas.configure(scrollregion=_canvas.bbox("all"))
+            if _canvas.bbox("all") else None)
         _canvas.bind("<Configure>",
                      lambda e: _canvas.itemconfig(_win, width=e.width))
         _canvas.bind("<Enter>", lambda e: _canvas.bind_all(
@@ -286,6 +386,9 @@ class SavingsForm(tk.Frame):
                                   bg=GREEN, fg=WHITE, relief="flat", padx=12, pady=4,
                                   command=self._show_edit_view)
         self.edit_btn.pack(side="right")
+        tk.Button(navbar, text="REVERSE", font=("Segoe UI", 10, "bold"),
+                  bg="#D32F2F", fg=WHITE, relief="flat", padx=12, pady=4,
+                  command=self._reverse_transaction_dialog).pack(side="right", padx=(0, 8))
 
         info_frame = tk.Frame(c, bg=LIGHT_BLUE, padx=12, pady=8)
         info_frame.pack(fill="x", pady=(0, 8))
@@ -293,7 +396,7 @@ class SavingsForm(tk.Frame):
 
         row1 = tk.Frame(info_frame, bg=LIGHT_BLUE)
         row1.pack(fill="x", pady=(0, 4))
-        for key, label in [("savings", "Savings"), ("shares", "Shares"),
+        for key, label in [("savings", "Savings"),
                            ("active_loan", "Active Loan"), ("outstanding", "Outstanding")]:
             f = tk.Frame(row1, bg=LIGHT_BLUE)
             f.pack(side="left", padx=(0, 18))
@@ -379,7 +482,6 @@ class SavingsForm(tk.Frame):
 
         summary = get_member_financial_summary(db_id)
         self.info_labels["savings"].config(text=format_currency(summary["total_savings"]))
-        self.info_labels["shares"].config(text=format_currency(summary["total_shares"]))
         self.info_labels["active_loan"].config(text=format_currency(summary["active_loan"]))
         self.info_labels["outstanding"].config(text=format_currency(summary["outstanding"]))
 
@@ -798,12 +900,6 @@ class SavingsForm(tk.Frame):
                            (self.selected_member_db_id,)).fetchone()
         member_name = row["full_name"] if row else "Member"
 
-        col_to_charge = {}
-        for col_key, _label, ctype in PASSBOOK_FEE_COLUMNS:
-            col_to_charge[col_key] = ctype
-        for col_id, name in self._custom_fee_cols:
-            col_to_charge[col_id] = name
-
         changed = False
         for item in self.edit_tree.get_children():
             vals = self.edit_tree.item(item, "values")
@@ -811,39 +907,127 @@ class SavingsForm(tk.Frame):
             if not date_str or date_str == "--":
                 continue
 
-            updates = {}
+            categories = {}
             for col_key in self._edit_col_keys:
                 if col_key in ("date", "method", "desc", "savings", "loan_repayment",
                                "loan_collected", "outstanding", "other"):
                     continue
                 idx = self.edit_cols.index(col_key)
                 val = vals[idx] if idx < len(vals) else ""
-                if val and val != "--":
-                    try:
-                        amt = float(str(val).replace(",", "").replace("₦", ""))
-                        if amt > 0:
-                            charge_type = col_to_charge.get(col_key)
-                            if charge_type:
-                                updates[charge_type] = amt
-                    except ValueError:
-                        pass
+                categories[col_key] = val if val and val != "--" else ""
 
-            if updates:
-                ok = update_passbook_charges(
-                    self.selected_member_db_id, date_str, updates,
-                    entered_by=self.current_user.get("id"))
-                if ok:
-                    changed = True
+            ok = save_passbook_input(
+                self.selected_member_db_id, date_str, categories,
+                payment_method="Cash",
+                entered_by=self.current_user.get("id"),
+                allow_backdate=True)
+            if ok:
+                changed = True
 
         if changed:
             messagebox.showinfo("Saved",
-                                f"Passbook charges updated for {member_name}.\n"
+                                f"Passbook updated for {member_name}.\n"
                                 "You can continue editing or add new payments.")
         else:
-            messagebox.showinfo("No Changes", "No charge amounts were changed.")
+            messagebox.showinfo("No Changes", "No amounts were changed.")
 
         # Stay in edit view — refresh the grid so admin can continue working
         self._populate_edit_grid()
+
+    def _reverse_transaction_dialog(self):
+        if not self.selected_member_db_id:
+            return
+        win = tk.Toplevel(self.detail_frame)
+        win.title("Reverse Transaction")
+        win.geometry("700x550")
+        win.minsize(700, 500)
+        win.configure(bg=WHITE)
+        win.transient(self.detail_frame)
+        win.grab_set()
+
+        tk.Label(win, text="Select a Posted transaction to reverse:",
+                 font=("Segoe UI", 11, "bold"), fg=BLUE, bg=WHITE
+                 ).pack(padx=15, pady=(12, 5), anchor="w")
+
+        # Action bar packed BOTTOM first so it never gets clipped
+        reason_var = tk.StringVar()
+        action_frame = tk.Frame(win, bg=WHITE)
+        action_frame.pack(side="bottom", fill="x", padx=15, pady=(6, 10))
+
+        reason_frame = tk.Frame(action_frame, bg=WHITE)
+        reason_frame.pack(fill="x")
+        tk.Label(reason_frame, text="Reason:", font=("Segoe UI", 10),
+                 bg=WHITE).pack(side="left")
+        tk.Entry(reason_frame, textvariable=reason_var, font=("Segoe UI", 10),
+                 width=40, relief="solid", bd=1).pack(side="left", padx=(6, 0))
+
+        def do_reverse():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showwarning("Select", "Pick a transaction first.")
+                return
+            txn_id = sel[0]
+            reason = reason_var.get().strip()
+            if not reason:
+                messagebox.showwarning("Reason", "Enter a reason for reversal.")
+                return
+            try:
+                reverse_transaction(txn_id, reason,
+                                    self.current_user.get("id"))
+                messagebox.showinfo("Reversed", "Transaction reversed successfully.")
+                win.destroy()
+                self._show_detail(self.selected_member_db_id)
+            except Exception as ex:
+                messagebox.showerror("Error", str(ex))
+
+        tk.Button(action_frame, text="Reverse Selected", font=("Segoe UI", 11, "bold"),
+                  bg="#D32F2F", fg=WHITE, relief="flat", padx=12, pady=4,
+                  command=do_reverse).pack(pady=(6, 0))
+
+        # Tree fills remaining space above the action bar
+        cols = ("txn_id", "date", "type", "amount", "description")
+        tree = ttk.Treeview(win, columns=cols, show="headings", height=12)
+        tree.heading("txn_id", text="Txn ID")
+        tree.heading("date", text="Date")
+        tree.heading("type", text="Type")
+        tree.heading("amount", text="Amount")
+        tree.heading("description", text="Description")
+        tree.column("txn_id", width=90)
+        tree.column("date", width=80)
+        tree.column("type", width=110)
+        tree.column("amount", width=90, anchor="e")
+        tree.column("description", width=200)
+        vsb = ttk.Scrollbar(win, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side="left", padx=15, fill="both", expand=True)
+        vsb.pack(side="right", fill="y", padx=(0, 15))
+
+        conn = get_connection()
+        txns = conn.execute(
+            """SELECT transaction_id, date, transaction_type, amount, description
+               FROM transactions
+               WHERE member_id = ? AND status = 'Posted'
+               ORDER BY date DESC, id DESC LIMIT 50""",
+            (self.selected_member_db_id,),
+        ).fetchall()
+        for t in txns:
+            tree.insert("", "end", iid=t["transaction_id"],
+                        values=(t["transaction_id"], t["date"],
+                                t["transaction_type"],
+                                format_currency(t["amount"] or 0),
+                                (t["description"] or "")[:50]))
+
+        # Center over parent and ensure visibility
+        win.update_idletasks()
+        pw = self.detail_frame.winfo_width()
+        ph = self.detail_frame.winfo_height()
+        px = self.detail_frame.winfo_rootx()
+        py = self.detail_frame.winfo_rooty()
+        wx = px + max(0, (pw - 700) // 2)
+        wy = py + max(0, (ph - 550) // 2)
+        win.geometry(f"700x550+{wx}+{wy}")
+        win.lift()
+        win.focus_force()
 
     # ── PUBLIC API ─────────────────────────────────────────────────
 

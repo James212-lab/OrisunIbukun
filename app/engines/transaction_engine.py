@@ -198,33 +198,7 @@ def record_share(member_db_id: int, shares: float, value_per_share: float,
                  date: str = None, allow_backdate: bool = False,
                  exact_amount: float | None = None,
                  payment_method: str = "Cash") -> str:
-    conn = get_connection()
-    date = resolve_entry_date(date, allow_backdate)
-    if exact_amount is None and (shares <= 0 or value_per_share <= 0):
-        raise ValueError("Shares and value per share must be greater than zero.")
-    # exact_amount pins the money leg to the kobo (used by the strict
-    # 50-50 auto-split); otherwise amount derives from whole units.
-    amount = exact_amount if exact_amount is not None else shares * value_per_share
-    with conn:
-        txn_id = record_transaction(
-            conn, member_db_id, TXN_SHARE_CONTRIBUTION, amount, meeting_id,
-            payment_method, entered_by=entered_by, date=date,
-        )
-        conn.execute(
-            """INSERT INTO shares (member_id, transaction_id, shares_added, total_shares, value_per_share)
-               SELECT ?, ?, ?, 
-                      COALESCE((SELECT SUM(shares_added) FROM shares WHERE member_id = ?), 0) + ?,
-                      ?""",
-            (member_db_id, txn_id, shares, member_db_id, shares, value_per_share),
-        )
-        conn.execute(
-            """UPDATE members SET 
-                share_count = COALESCE((SELECT SUM(shares_added) FROM shares WHERE member_id = ?), 0),
-                share_value = COALESCE((SELECT SUM(shares_added) FROM shares WHERE member_id = ?), 0) * ?
-               WHERE id = ?""",
-            (member_db_id, member_db_id, value_per_share, member_db_id),
-        )
-    return txn_id
+    raise ValueError("Share contributions are discontinued.")
 
 
 def create_loan(member_db_id: int, principal: float, interest_rate: float = 0,
@@ -235,7 +209,7 @@ def create_loan(member_db_id: int, principal: float, interest_rate: float = 0,
     date = resolve_entry_date(date, allow_backdate)
     loan_id = generate_id("LN")
     interest_amount = principal * interest_rate / 100 if interest_rate else 0
-    total_repayable = principal + interest_amount + processing_fee + other_charges
+    total_repayable = principal + interest_amount
 
     loan_id_num = None
     with conn:
@@ -290,6 +264,22 @@ def disburse_loan(loan_db_id: int, member_db_id: int, entered_by: int = None,
             "UPDATE loans SET status = ?, disbursement_date = ? WHERE id = ?",
             (LOAN_STATUS_DISBURSED, date, loan["id"]),
         )
+        processing_fee = loan["processing_fee"] or 0
+        other_charges = loan["other_charges"] or 0
+        if processing_fee > 0:
+            record_transaction(
+                conn, member_db_id, TXN_OTHER, processing_fee,
+                meeting_id, "Cash",
+                description="Loan Processing Fee",
+                entered_by=entered_by, date=date,
+            )
+        if other_charges > 0:
+            record_transaction(
+                conn, member_db_id, TXN_OTHER, other_charges,
+                meeting_id, "Cash",
+                description="Other Loan Charges",
+                entered_by=entered_by, date=date,
+            )
     return txn_id
 
 
@@ -344,6 +334,43 @@ def add_guarantor(loan_db_id: int, guarantor_member_db_id: int,
         )
 
 
+def add_external_guarantor(loan_db_id: int, full_name: str,
+                           phone: str = "", address: str = "",
+                           id_type: str = "", id_number: str = "",
+                           photo_path: str = "", relationship: str = "",
+                           guarantee_amount: float = 0):
+    conn = get_connection()
+    with conn:
+        conn.execute(
+            """INSERT INTO external_guarantors
+               (loan_id, full_name, phone, address, id_type, id_number,
+                photo_path, relationship, guarantee_amount)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (loan_db_id, full_name, phone, address, id_type, id_number,
+             photo_path, relationship, guarantee_amount),
+        )
+
+
+def get_loan_guarantors(loan_db_id: int) -> dict:
+    conn = get_connection()
+    members = conn.execute(
+        """SELECT lg.*, m.full_name, m.member_id, m.phone
+           FROM loan_guarantors lg
+           JOIN members m ON lg.guarantor_member_id = m.id
+           WHERE lg.loan_id = ?""",
+        (loan_db_id,),
+    ).fetchall()
+    external = conn.execute(
+        "SELECT * FROM external_guarantors WHERE loan_id = ?",
+        (loan_db_id,),
+    ).fetchall()
+    return {
+        "members": [dict(r) for r in members],
+        "external": [dict(r) for r in external],
+        "total_count": len(members) + len(external),
+    }
+
+
 def get_member_loans(member_db_id: int) -> list:
     """Return all loans for a member, ordered by most recent first."""
     conn = get_connection()
@@ -393,8 +420,11 @@ def get_all_loan_members(status_filter: str = "All") -> list:
     return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 
-def reverse_transaction(transaction_id: str, reason: str, reversed_by: int):
-    conn = get_connection()
+def reverse_transaction(transaction_id: str, reason: str, reversed_by: int,
+                        conn=None):
+    own_conn = conn is None
+    if own_conn:
+        conn = get_connection()
     with conn:
         cur = conn.execute(
             "SELECT * FROM transactions WHERE transaction_id = ?", (transaction_id,)
@@ -404,6 +434,76 @@ def reverse_transaction(transaction_id: str, reason: str, reversed_by: int):
             raise ValueError("Transaction not found.")
         if txn["status"] == TXN_STATUS_REVERSED:
             raise ValueError("Transaction is already reversed.")
+
+        txn_type = txn["transaction_type"]
+        member_id = txn["member_id"]
+
+        if txn_type in (TXN_SAVINGS, TXN_WITHDRAWAL):
+            conn.execute("DELETE FROM savings WHERE transaction_id = ?",
+                         (transaction_id,))
+        elif txn_type == TXN_LOAN_REPAYMENT:
+            repay = conn.execute(
+                "SELECT * FROM loan_repayments WHERE transaction_id = ?",
+                (transaction_id,)).fetchone()
+            if repay:
+                conn.execute("DELETE FROM loan_repayments WHERE transaction_id = ?",
+                             (transaction_id,))
+                conn.execute(
+                    """UPDATE loans
+                       SET outstanding_principal = outstanding_principal + ?,
+                           outstanding_interest = outstanding_interest + ?,
+                           status = CASE
+                               WHEN outstanding_principal + ? > 0 THEN 'Disbursed'
+                               ELSE status END
+                       WHERE id = ?""",
+                    (repay["principal_portion"], repay["interest_portion"],
+                     repay["principal_portion"], repay["loan_id"]),
+                )
+        elif txn_type == TXN_CHARGE_PAYMENT:
+            apps = conn.execute(
+                "SELECT charge_id, amount_applied FROM charge_payment_applications WHERE txn_id = ?",
+                (transaction_id,)).fetchall()
+            for app in apps:
+                conn.execute(
+                    """UPDATE member_charges
+                       SET amount_paid = MAX(0, amount_paid - ?),
+                           status = CASE
+                               WHEN MAX(0, amount_paid - ?) < 0.01 THEN 'Owed'
+                               WHEN MAX(0, amount_paid - ?) < amount - 0.01 THEN 'Partial'
+                               ELSE 'Paid' END
+                       WHERE charge_id = ?""",
+                    (app["amount_applied"], app["amount_applied"],
+                     app["amount_applied"], app["charge_id"]),
+                )
+                charge = conn.execute(
+                    "SELECT member_id, meeting_id, charge_type FROM member_charges WHERE charge_id = ?",
+                    (app["charge_id"],)).fetchone()
+                if charge and charge["charge_type"] == CHARGE_ABSENTISM:
+                    conn.execute(
+                        """UPDATE absentism_fines
+                           SET amount_paid = MAX(0, amount_paid - ?),
+                               status = CASE
+                                   WHEN MAX(0, amount_paid - ?) < 0.01 THEN 'Owed'
+                                   ELSE 'Partial' END
+                           WHERE member_id = ? AND meeting_id = ? AND status != 'Paid'
+                           ORDER BY created_at ASC LIMIT 1""",
+                        (app["amount_applied"], app["amount_applied"],
+                         charge["member_id"], charge["meeting_id"]),
+                    )
+            conn.execute(
+                "DELETE FROM charge_payment_applications WHERE txn_id = ?",
+                (transaction_id,))
+        elif txn_type == TXN_LOAN_DISBURSEMENT:
+            conn.execute(
+                """UPDATE loans
+                   SET status = 'Approved', disbursement_date = NULL
+                   WHERE member_id = ? AND disbursement_date = ?
+                     AND status = 'Disbursed'""",
+                (member_id, txn["date"]),
+            )
+        elif txn_type == TXN_EXPENSE:
+            conn.execute("DELETE FROM expenses WHERE transaction_id = ?",
+                         (transaction_id,))
 
         reversal_id = record_transaction(
             conn, txn["member_id"], f"Reversal: {txn['transaction_type']}",
@@ -431,12 +531,6 @@ def get_member_financial_summary(member_db_id: int) -> dict:
         (member_db_id,),
     )
     total_savings = cur.fetchone()["total"]
-
-    cur = conn.execute(
-        "SELECT COALESCE(share_value, 0) as val FROM members WHERE id = ?",
-        (member_db_id,),
-    )
-    total_shares = cur.fetchone()["val"]
 
     cur = conn.execute(
         """SELECT COALESCE(SUM(principal_amount), 0) as total,
@@ -483,11 +577,10 @@ def get_member_financial_summary(member_db_id: int) -> dict:
 
     return {
         "total_savings": total_savings,
-        "total_shares": total_shares,
         "active_loan": active_loan,
         "outstanding": outstanding,
         "loan_paid": loan_paid,
-        "total_paid": total_savings + total_shares + loan_paid,
+        "total_paid": total_savings + loan_paid,
         **charges,
     }
 
@@ -559,13 +652,19 @@ def apply_absence_fines(meeting_id: int, amount: float,
         ).fetchall()
         for r in rows:
             cid = _create_charge(
-                conn, r["member_id"], CHARGE_ABSENCE_FINE, amount,
+                conn, r["member_id"], CHARGE_ABSENTISM, amount,
                 meeting_id=meeting_id,
-                description=f"Absence fine for meeting #{meeting_id}",
+                description=f"Absentism fine for meeting #{meeting_id}",
                 entered_by=entered_by,
             )
             if cid:
                 count += 1
+                conn.execute(
+                    """INSERT INTO absentism_fines
+                       (member_id, meeting_id, amount, status, entered_by)
+                       VALUES (?, ?, ?, 'Owed', ?)""",
+                    (r["member_id"], meeting_id, amount, entered_by),
+                )
     return count
 
 
@@ -603,6 +702,7 @@ def reverse_absence_charges(member_db_id: int, meeting_id: int,
 
     If the charge is fully unpaid (amount_paid == 0), it is deleted.
     If partially paid, the outstanding portion is zeroed out.
+    Also cleans up the absentism_fines audit log.
     Returns the number of charges affected.
     """
     own_conn = conn is None
@@ -612,8 +712,8 @@ def reverse_absence_charges(member_db_id: int, meeting_id: int,
     rows = conn.execute(
         """SELECT id, amount, amount_paid FROM member_charges
            WHERE member_id = ? AND meeting_id = ?
-             AND charge_type IN (?, ?)""",
-        (member_db_id, meeting_id, CHARGE_ABSENCE_FINE, CHARGE_MINUTES_LEVY),
+             AND charge_type IN (?, ?, ?)""",
+        (member_db_id, meeting_id, CHARGE_ABSENCE_FINE, CHARGE_ABSENTISM, CHARGE_MINUTES_LEVY),
     ).fetchall()
     for r in rows:
         paid = r["amount_paid"] or 0
@@ -625,6 +725,11 @@ def reverse_absence_charges(member_db_id: int, meeting_id: int,
                 (paid, CHARGE_STATUS_PAID, r["id"]),
             )
         count += 1
+    # Clean up absentism_fines audit records for this meeting
+    conn.execute(
+        "DELETE FROM absentism_fines WHERE member_id = ? AND meeting_id = ? AND amount_paid < 1e-9",
+        (member_db_id, meeting_id),
+    )
     if own_conn:
         conn.commit()
     return count
@@ -662,6 +767,7 @@ def delete_meeting(meeting_id: int, entered_by: int = None) -> bool:
             return False
         conn.execute("DELETE FROM attendance WHERE meeting_id = ?", (meeting_id,))
         conn.execute("DELETE FROM member_charges WHERE meeting_id = ?", (meeting_id,))
+        conn.execute("DELETE FROM absentism_fines WHERE meeting_id = ?", (meeting_id,))
         conn.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
         user_label = ""
         if entered_by:
@@ -745,12 +851,36 @@ def record_charge_payment(member_db_id: int, amount: float, category: str,
                 "UPDATE member_charges SET amount_paid = ?, status = ? WHERE id = ?",
                 (new_paid, status, r["id"]),
             )
+            conn.execute(
+                """INSERT INTO charge_payment_applications
+                   (txn_id, charge_id, amount_applied) VALUES (?, ?, ?)""",
+                ("__pending__", r["charge_id"], pay),
+            )
+            # Sync absentism_fines audit table for Absentism payments
+            if charge_type == CHARGE_ABSENTISM and r["meeting_id"]:
+                af = conn.execute(
+                    """SELECT id, amount, amount_paid FROM absentism_fines
+                       WHERE member_id = ? AND meeting_id = ? AND status != 'Paid'
+                       ORDER BY created_at ASC, id ASC LIMIT 1""",
+                    (member_db_id, r["meeting_id"]),
+                ).fetchone()
+                if af:
+                    af_new_paid = (af["amount_paid"] or 0) + pay
+                    af_status = "Paid" if af_new_paid >= (af["amount"] or 0) - 1e-9 else "Partial"
+                    conn.execute(
+                        "UPDATE absentism_fines SET amount_paid = ?, status = ? WHERE id = ?",
+                        (af_new_paid, af_status, af["id"]),
+                    )
             remaining -= pay
         txn_id = record_transaction(
             conn, member_db_id, TXN_CHARGE_PAYMENT, amount, meeting_id,
             payment_method,
             description=description or f"{category} payment",
             entered_by=entered_by, date=date,
+        )
+        conn.execute(
+            "UPDATE charge_payment_applications SET txn_id = ? WHERE txn_id = ?",
+            (txn_id, "__pending__"),
         )
     return txn_id
 
@@ -802,41 +932,7 @@ def record_payment_split(member_db_id: int, amount: float,
                          entered_by: int = None, date: str = None,
                          share_price: float = 0,
                          allow_backdate: bool = False) -> dict:
-    """Record a general savings payment auto-split strictly 50/50.
-
-    Exactly half goes to the savings balance and exactly half buys shares
-    at share_price (fractional units are allowed, e.g. ₦20,000 ->
-    ₦10,000 savings + ₦10,000 shares). Both legs sit under the member's
-    general savings umbrella and always sum to the kobo.
-    Returns {"savings": x, "shares": n, "shares_value": y, "txn_ids": [...]}.
-    """
-    from database.schema import get_setting
-    if amount <= 0:
-        raise ValueError("Amount must be greater than zero.")
-    if not share_price:
-        try:
-            share_price = float(get_setting("share_price", "1000") or 1000)
-        except ValueError:
-            share_price = 1000
-    if share_price <= 0:
-        raise ValueError("Share price must be greater than zero.")
-    date = resolve_entry_date(date, allow_backdate)
-    half = round(amount / 2, 2)
-    savings_leg = half
-    shares_value = round(amount - half, 2)  # == half; exact to the kobo
-    shares_units = round(shares_value / share_price, 4)
-    savings_txn = record_savings(member_db_id, savings_leg, meeting_id,
-                                 payment_method, entered_by, date, "Savings",
-                                 allow_backdate=True)
-    txn_ids = [savings_txn]
-    if shares_units > 0:
-        txn_ids.append(record_share(member_db_id, shares_units, share_price,
-                                    meeting_id, entered_by, date,
-                                    allow_backdate=True,
-                                    exact_amount=shares_value,
-                                    payment_method=payment_method))
-    return {"savings": savings_leg, "shares": shares_units,
-            "shares_value": shares_value, "txn_ids": txn_ids}
+    raise ValueError("Payment split is discontinued. Use record_savings directly.")
 
 
 def record_withdrawal(member_db_id: int, amount: float,
@@ -877,12 +973,12 @@ def record_withdrawal(member_db_id: int, amount: float,
 def get_member_passbook(member_db_id: int) -> list:
     """Build the member passbook: one row per date, ordered by date.
 
-    Merges transactions (savings, loans, etc.) with member_charges (fees).
-    Fee columns come from PASSBOOK_FEE_COLUMNS in constants.
+    All values come from transactions (Money-In model). Category columns
+    (Minutes, ICT, etc.) are populated from Charge Payment transactions
+    whose description starts with the category name.
     """
     conn = get_connection()
 
-    # --- Transactions ---
     cur = conn.execute(
         """SELECT t.transaction_id, t.date, t.transaction_type, t.amount,
                   t.description, t.payment_method
@@ -892,6 +988,7 @@ def get_member_passbook(member_db_id: int) -> list:
         (member_db_id,),
     )
     txns = cur.fetchall()
+
     repay_info = {}
     for r in conn.execute(
             """SELECT lr.transaction_id, lr.principal_portion,
@@ -900,54 +997,21 @@ def get_member_passbook(member_db_id: int) -> list:
                WHERE l.member_id = ?""", (member_db_id,)).fetchall():
         repay_info[r["transaction_id"]] = r
 
-    # --- Charges (fees) ---
-    charge_rows = conn.execute(
-        """SELECT m.date as mdate, mc.charge_type,
-                  SUM(mc.amount) as paid
-           FROM member_charges mc
-           JOIN meetings m ON mc.meeting_id = m.id
-           WHERE mc.member_id = ? AND mc.amount > 0
-           GROUP BY m.date, mc.charge_type""",
-        (member_db_id,),
-    ).fetchall()
+    fee_map = {k: v for k, v, _ in PASSBOOK_FEE_COLUMNS}
 
-    # Map charge_type -> column key using PASSBOOK_FEE_COLUMNS
-    from constants import PASSBOOK_FEE_COLUMNS
-    charge_type_to_col = {}
-    for col_key, _label, ctype in PASSBOOK_FEE_COLUMNS:
-        charge_type_to_col[ctype] = col_key
-
-    # Also handle legacy charge types that map to existing columns
-    charge_type_to_col.setdefault(CHARGE_MINUTES_LEVY, "minutes")
-    charge_type_to_col.setdefault(CHARGE_ABSENCE_FINE, "fines")
-
-    # Build charge lookup: {date_str: {col_key: total_paid}}
-    charges_by_date = {}
-    for cr in charge_rows:
-        # Get meeting date from meetings table
-        mdate = None
-        if cr["mdate"]:
-            mdate = cr["mdate"]
-        else:
-            # Fallback: get date from the charge's created_at
-            continue
-        if mdate not in charges_by_date:
-            charges_by_date[mdate] = {}
-        col_key = charge_type_to_col.get(cr["charge_type"], "other")
-        charges_by_date[mdate][col_key] = (
-            charges_by_date[mdate].get(col_key, 0) + (cr["paid"] or 0))
-
-    # --- Build passbook rows ---
     rows = []
     running_outstanding = 0.0
     for t in txns:
-        tid, ttype, amt = t["transaction_id"], t["transaction_type"], t["amount"] or 0
-        r = {"date": t["date"], "savings": 0, "shares": 0,
+        tid = t["transaction_id"]
+        ttype = t["transaction_type"]
+        amt = t["amount"] or 0
+        desc = (t["description"] or "")
+
+        r = {"date": t["date"], "savings": 0,
              "loan_repayment": 0, "loan_collected": 0,
              "loan_outstanding": "", "other": 0,
              "method": t["payment_method"] or "",
-             "description": t["description"] or ""}
-        # Add fee columns
+             "description": desc}
         for col_key, _label, _ctype in PASSBOOK_FEE_COLUMNS:
             r[col_key] = 0
 
@@ -955,10 +1019,8 @@ def get_member_passbook(member_db_id: int) -> list:
             r["savings"] = amt
         elif ttype == TXN_WITHDRAWAL:
             r["savings"] = -abs(amt)
-            if not (t["description"] or "").strip():
+            if not desc.strip():
                 r["description"] = "Savings withdrawal"
-        elif ttype == TXN_SHARE_CONTRIBUTION:
-            r["shares"] = amt
         elif ttype == TXN_LOAN_REPAYMENT:
             r["loan_repayment"] = amt
             info = repay_info.get(tid)
@@ -970,104 +1032,121 @@ def get_member_passbook(member_db_id: int) -> list:
             running_outstanding += amt
             r["loan_outstanding"] = running_outstanding
         elif ttype == TXN_CHARGE_PAYMENT:
-            # Legacy: classify by description prefix
-            desc = (t["description"] or "")
-            if desc.startswith("Minutes"):
-                r["minutes"] = amt
-            elif desc.startswith("Fines"):
-                r["fines"] = amt
-            else:
+            matched = False
+            for col_key, label, _ctype in PASSBOOK_FEE_COLUMNS:
+                if desc.startswith(label):
+                    r[col_key] = amt
+                    matched = True
+                    break
+            if not matched:
                 r["other"] = amt
         elif ttype in (TXN_OTHER, TXN_ENTRANCE_FEE):
-            r["other"] = amt
+            if desc.startswith("Loan Processing") or desc.startswith("Other Loan"):
+                r["other"] = amt
+            else:
+                r["other"] = amt
         rows.append(r)
 
-    # Merge charge data into rows by date
+    merged = {}
     for row in rows:
-        date_str = row["date"]
-        if date_str in charges_by_date:
-            for col_key, paid in charges_by_date[date_str].items():
-                if col_key in row:
-                    row[col_key] = row.get(col_key, 0) + paid
+        d = row["date"]
+        if d not in merged:
+            merged[d] = row
+        else:
+            m = merged[d]
+            for key in ("savings", "loan_repayment", "loan_collected", "other"):
+                m[key] += row[key]
+            for col_key, _, _ in PASSBOOK_FEE_COLUMNS:
+                m[col_key] += row.get(col_key, 0)
+            if row["loan_outstanding"] != "":
+                m["loan_outstanding"] = row["loan_outstanding"]
+            if row["description"] and not m["description"]:
+                m["description"] = row["description"]
+            if row["method"] and not m["method"]:
+                m["method"] = row["method"]
 
-    # Add any charge-only dates not in transactions
-    txn_dates = {r["date"] for r in rows}
-    for date_str, col_map in charges_by_date.items():
-        if date_str not in txn_dates:
-            r = {"date": date_str, "savings": 0, "shares": 0,
-                 "loan_repayment": 0, "loan_collected": 0,
-                 "loan_outstanding": "", "other": 0,
-                 "method": "", "description": ""}
-            for col_key, _label, _ctype in PASSBOOK_FEE_COLUMNS:
-                r[col_key] = 0
-            for col_key, paid in col_map.items():
-                if col_key in r:
-                    r[col_key] = paid
-            rows.append(r)
-
-    rows.sort(key=lambda x: x["date"])
-    return rows
+    return sorted(merged.values(), key=lambda x: x["date"])
 
 
-def update_passbook_charges(member_db_id: int, date_str: str,
-                            charge_updates: dict, entered_by: int = None) -> bool:
-    """Update or create charges for a member on a specific date.
+def save_passbook_input(member_db_id: int, date_str: str, categories: dict,
+                        payment_method: str = "Cash",
+                        entered_by: int = None,
+                        allow_backdate: bool = False) -> bool:
+    """Save passbook category inputs as Money-In transactions.
 
-    charge_updates: {charge_type_str: amount} e.g. {"ICT": 2000, "AGM": 1000}
-    If amount > 0 and no charge exists, creates one.
-    If amount > 0 and charge exists, updates the amount.
-    If amount is 0 or empty string, skips (does not delete existing).
+    categories: {category_key: amount} e.g. {"minutes": 2000, "ict": 1000}
+    category_key must be a key from PASSBOOK_FEE_COLUMNS or a custom key.
+
+    For each category:
+      - amount > 0 and no existing txn  -> insert new TXN_CHARGE_PAYMENT
+      - amount > 0 and existing txn differs -> reverse old, insert new
+      - amount 0/empty and existing txn -> reverse it
     Returns True if any changes were made.
     """
     conn = get_connection()
+    date_str = resolve_entry_date(date_str, allow_backdate)
     changed = False
+
+    col_to_label = {k: v for k, v, _ in PASSBOOK_FEE_COLUMNS}
+
     with conn:
-        # Find or create meeting for this date
         meeting = conn.execute(
             "SELECT id FROM meetings WHERE date = ?", (date_str,)
         ).fetchone()
         if not meeting:
-            # Create a meeting for this date
             meeting_id = create_meeting(
                 date=date_str, notes="",
                 created_by=entered_by, allow_backdate=True)
         else:
             meeting_id = meeting["id"]
 
-        for charge_type, amount in charge_updates.items():
-            if not charge_type or amount in (None, "", 0, "0"):
+        for col_key, raw_val in categories.items():
+            if col_key in ("date", "method", "desc", "savings", "loan_repayment",
+                           "loan_collected", "outstanding", "other"):
                 continue
+            label = col_to_label.get(col_key, col_key.replace("_", " ").title())
             try:
-                amt = float(amount)
+                amt = float(str(raw_val).replace(",", "").replace("₦", ""))
             except (ValueError, TypeError):
-                continue
-            if amt <= 0:
-                continue
+                amt = 0
 
             existing = conn.execute(
-                """SELECT id, amount, amount_paid FROM member_charges
-                   WHERE member_id = ? AND charge_type = ? AND meeting_id = ?
+                """SELECT t.transaction_id, t.amount
+                   FROM transactions t
+                   WHERE t.member_id = ? AND t.transaction_type = 'Charge Payment'
+                     AND t.description = ? AND t.date = ? AND t.status = 'Posted'
                    LIMIT 1""",
-                (member_db_id, charge_type, meeting_id)
+                (member_db_id, f"{label} input", date_str),
             ).fetchone()
 
-            if existing:
-                if abs((existing["amount"] or 0) - amt) > 0.01:
-                    conn.execute(
-                        "UPDATE member_charges SET amount = ? WHERE id = ?",
-                        (amt, existing["id"]))
+            if amt > 0:
+                if existing:
+                    if abs((existing["amount"] or 0) - amt) > 0.01:
+                        reverse_transaction(
+                            existing["transaction_id"],
+                            "Passbook input update",
+                            entered_by or 0, conn=conn)
+                        record_transaction(
+                            conn, member_db_id, TXN_CHARGE_PAYMENT, amt,
+                            meeting_id, payment_method,
+                            description=f"{label} input",
+                            entered_by=entered_by, date=date_str)
+                        changed = True
+                else:
+                    record_transaction(
+                        conn, member_db_id, TXN_CHARGE_PAYMENT, amt,
+                        meeting_id, payment_method,
+                        description=f"{label} input",
+                        entered_by=entered_by, date=date_str)
                     changed = True
             else:
-                charge_id = generate_id("CH")
-                conn.execute(
-                    """INSERT INTO member_charges
-                       (charge_id, member_id, meeting_id, charge_type,
-                        description, amount, amount_paid, status, created_by)
-                       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)""",
-                    (charge_id, member_db_id, meeting_id, charge_type,
-                     f"{charge_type} for {date_str}",
-                     amt, CHARGE_STATUS_OWED, entered_by))
-                changed = True
+                if existing:
+                    reverse_transaction(
+                        existing["transaction_id"],
+                        "Passbook input removed",
+                        entered_by or 0, conn=conn)
+                    changed = True
+
     return changed
 
 
@@ -1175,11 +1254,67 @@ def record_remittance(date: str, amount: float, period_covered: str = "",
     return rem_id
 
 
+def record_hq_funding(amount: float, date: str = "", description: str = "",
+                      payment_method: str = "Cash", entered_by: int = None,
+                      allow_backdate: bool = False) -> str:
+    """Record money received from headquarters (IN)."""
+    if amount <= 0:
+        raise ValueError("Amount must be greater than zero.")
+    date = resolve_entry_date(date, allow_backdate)
+    conn = get_connection()
+    with conn:
+        txn_id = record_transaction(
+            conn, None, "Headquarters Funding", amount,
+            payment_method=payment_method,
+            description=description or "Funding from HQ",
+            entered_by=entered_by, date=date,
+        )
+        _log_finance_entry(conn, entered_by, "HQ Funding",
+                           f"Received {amount:,.0f} from HQ",
+                           date, amount)
+    return txn_id
+
+
+def record_expense(amount: float, date: str = "", category: str = "",
+                   description: str = "", payment_method: str = "Cash",
+                   entered_by: int = None,
+                   allow_backdate: bool = False) -> str:
+    """Record an expense (OUT). Writes to both transactions and expenses."""
+    if amount <= 0:
+        raise ValueError("Amount must be greater than zero.")
+    date = resolve_entry_date(date, allow_backdate)
+    conn = get_connection()
+    with conn:
+        txn_id = record_transaction(
+            conn, None, "Expense", amount,
+            payment_method=payment_method,
+            description=description or category or "Expense",
+            entered_by=entered_by, date=date,
+        )
+        conn.execute(
+            """INSERT INTO expenses (transaction_id, category, description,
+               amount, approved_by) VALUES (?, ?, ?, ?, ?)""",
+            (txn_id, category, description, amount, entered_by),
+        )
+        _log_finance_entry(conn, entered_by, "Expense",
+                           f"{category}: {description}" if category else description,
+                           date, amount)
+    return txn_id
+
+
+def _log_finance_entry(conn, user_id, action, details, date, amount):
+    """Log non-member finance entries to audit_logs."""
+    conn.execute(
+        "INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)",
+        (user_id, action, f"[{date}] {details} ({amount:,.0f})"),
+    )
+
+
 def get_monthly_summary(year: int, month: int) -> dict:
     conn = get_connection()
     month_str = f"{year}-{month:02d}"
 
-    categories_in = ["Savings", "Share Contribution", "Loan Repayment",
+    categories_in = ["Savings", "Loan Repayment",
                        "Charge Payment", "Entrance Fee", "Other"]
     placeholders = ",".join(["?"] * len(categories_in))
 
@@ -1230,4 +1365,109 @@ def get_monthly_summary(year: int, month: int) -> dict:
         "remittance": remittance,
         "money_out": loans_out + withdrawals + expenses + remittance,
         "net": money_in - (loans_out + withdrawals + expenses + remittance),
+    }
+
+
+def get_monthly_financial_statement(year: int, month: int) -> dict:
+    """Compute the monthly financial statement (IN vs OUT model).
+
+    IN: Savings, Minutes, Absentism, Lateness, Others, HQ Funding
+    OUT: Expenses, Loans Disbursed, HQ Remittance
+    NET: IN - OUT
+    """
+    conn = get_connection()
+    month_str = f"{year}-{month:02d}"
+
+    # ── IN ──
+    cur = conn.execute(
+        """SELECT COALESCE(SUM(amount), 0) as total FROM transactions
+           WHERE transaction_type = 'Savings'
+           AND strftime('%Y-%m', date) = ? AND status = 'Posted'""",
+        (month_str,))
+    in_savings = cur.fetchone()["total"]
+
+    cur = conn.execute(
+        """SELECT COALESCE(SUM(amount), 0) as total FROM transactions
+           WHERE transaction_type = 'Charge Payment'
+           AND strftime('%Y-%m', date) = ? AND status = 'Posted'""",
+        (month_str,))
+    total_charges = cur.fetchone()["total"]
+
+    # Break down charge payments by description prefix
+    in_minutes = 0
+    in_absentism = 0
+    in_lateness = 0
+    in_others = total_charges
+    for desc_prefix, field in [
+        ("Minutes", "in_minutes"), ("Absentism", "in_absentism"),
+        ("Lateness", "in_lateness"),
+    ]:
+        cur = conn.execute(
+            """SELECT COALESCE(SUM(amount), 0) as total FROM transactions
+               WHERE transaction_type = 'Charge Payment'
+               AND description LIKE ?
+               AND strftime('%Y-%m', date) = ? AND status = 'Posted'""",
+            (f"{desc_prefix}%", month_str))
+        val = cur.fetchone()["total"]
+        if field == "in_minutes":
+            in_minutes = val
+        elif field == "in_absentism":
+            in_absentism = val
+        elif field == "in_lateness":
+            in_lateness = val
+        in_others -= val
+
+    # Add Entrance Fee and Other to Others
+    cur = conn.execute(
+        """SELECT COALESCE(SUM(amount), 0) as total FROM transactions
+           WHERE transaction_type IN ('Entrance Fee', 'Other')
+           AND strftime('%Y-%m', date) = ? AND status = 'Posted'""",
+        (month_str,))
+    in_others += cur.fetchone()["total"]
+
+    cur = conn.execute(
+        """SELECT COALESCE(SUM(amount), 0) as total FROM transactions
+           WHERE transaction_type = 'Headquarters Funding'
+           AND strftime('%Y-%m', date) = ? AND status = 'Posted'""",
+        (month_str,))
+    in_hq = cur.fetchone()["total"]
+
+    amount_in = in_savings + in_minutes + in_absentism + in_lateness + in_others + in_hq
+
+    # ── OUT ──
+    cur = conn.execute(
+        """SELECT COALESCE(SUM(amount), 0) as total FROM transactions
+           WHERE transaction_type = 'Expense'
+           AND strftime('%Y-%m', date) = ? AND status = 'Posted'""",
+        (month_str,))
+    out_expenses = cur.fetchone()["total"]
+
+    cur = conn.execute(
+        """SELECT COALESCE(SUM(amount), 0) as total FROM transactions
+           WHERE transaction_type = 'Loan Disbursement'
+           AND strftime('%Y-%m', date) = ? AND status = 'Posted'""",
+        (month_str,))
+    out_loans = cur.fetchone()["total"]
+
+    cur = conn.execute(
+        """SELECT COALESCE(SUM(amount), 0) as total FROM headquarters_remittances
+           WHERE strftime('%Y-%m', date) = ?""",
+        (month_str,))
+    out_hq = cur.fetchone()["total"]
+
+    amount_out = out_expenses + out_loans + out_hq
+
+    return {
+        "in_savings": in_savings,
+        "in_minutes": in_minutes,
+        "in_absentism": in_absentism,
+        "in_lateness": in_lateness,
+        "in_others": in_others,
+        "in_hq": in_hq,
+        "amount_in": amount_in,
+        "out_expenses": out_expenses,
+        "out_loans": out_loans,
+        "out_hq": out_hq,
+        "amount_out": amount_out,
+        "net": amount_in - amount_out,
     }

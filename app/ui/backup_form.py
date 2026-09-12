@@ -41,6 +41,12 @@ class BackupForm(tk.Frame):
         tk.Label(self, text="Available Backups", font=("Segoe UI", 11, "bold"),
                  bg="#FFFFFF", fg="#333333", anchor="w").pack(fill=tk.X, padx=20, pady=(15, 5))
 
+        restore_frame = tk.Frame(self, bg="#FFFFFF")
+        restore_frame.pack(fill=tk.X, padx=20, pady=(0, 10), side="bottom")
+        tk.Button(restore_frame, text="RESTORE", font=("Segoe UI", 12, "bold"),
+                  bg="#E3F2FD", fg="#1565C0", relief=tk.FLAT, cursor="hand2",
+                  padx=25, pady=10, command=self._do_restore).pack(side=tk.LEFT)
+
         columns = ("id", "date", "type", "size", "notes")
         tree_frame = tk.Frame(self, bg="#FFFFFF")
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 10))
@@ -61,12 +67,6 @@ class BackupForm(tk.Frame):
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
-
-        restore_frame = tk.Frame(self, bg="#FFFFFF")
-        restore_frame.pack(fill=tk.X, padx=20, pady=(0, 20))
-        tk.Button(restore_frame, text="RESTORE", font=("Segoe UI", 12, "bold"),
-                  bg="#E3F2FD", fg="#1565C0", relief=tk.FLAT, cursor="hand2",
-                  padx=25, pady=10, command=self._do_restore).pack(side=tk.LEFT)
 
     def _load_backups(self):
         for item in self.tree.get_children():

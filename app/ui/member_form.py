@@ -75,6 +75,20 @@ class MemberForm(tk.Frame):
         tk.Label(self.list_frame, textvariable=self.status_var, font=("Segoe UI", 9),
                  fg="#666666", bg="#FFFFFF", anchor="w").pack(fill="x", padx=15)
 
+        pag_frame = tk.Frame(self.list_frame, bg="#FFFFFF", padx=15)
+        pag_frame.pack(fill="x", pady=(8, 12), side="bottom")
+        self.prev_btn = tk.Button(pag_frame, text="< Previous", font=("Segoe UI", 9),
+                                  bg="#E3F2FD", fg="#1565C0", relief="flat", padx=10, pady=3,
+                                  state="disabled", command=self._prev_page)
+        self.prev_btn.pack(side="left")
+        self.page_info_var = tk.StringVar(value="Page 1 of 1")
+        tk.Label(pag_frame, textvariable=self.page_info_var, font=("Segoe UI", 9),
+                 fg="#666666", bg="#FFFFFF").pack(side="left", padx=15)
+        self.next_btn = tk.Button(pag_frame, text="Next >", font=("Segoe UI", 9),
+                                  bg="#E3F2FD", fg="#1565C0", relief="flat", padx=10, pady=3,
+                                  state="disabled", command=self._next_page)
+        self.next_btn.pack(side="left")
+
         cols_frame = tk.Frame(self.list_frame, bg="#FFFFFF", padx=15)
         cols_frame.pack(fill="both", expand=True)
 
@@ -107,20 +121,6 @@ class MemberForm(tk.Frame):
 
         self.tree.bind("<Double-1>", lambda e: self._on_tree_select())
 
-        pag_frame = tk.Frame(self.list_frame, bg="#FFFFFF", padx=15)
-        pag_frame.pack(fill="x", pady=(8, 12))
-        self.prev_btn = tk.Button(pag_frame, text="< Previous", font=("Segoe UI", 9),
-                                  bg="#E3F2FD", fg="#1565C0", relief="flat", padx=10, pady=3,
-                                  state="disabled", command=self._prev_page)
-        self.prev_btn.pack(side="left")
-        self.page_info_var = tk.StringVar(value="Page 1 of 1")
-        tk.Label(pag_frame, textvariable=self.page_info_var, font=("Segoe UI", 9),
-                 fg="#666666", bg="#FFFFFF").pack(side="left", padx=15)
-        self.next_btn = tk.Button(pag_frame, text="Next >", font=("Segoe UI", 9),
-                                  bg="#E3F2FD", fg="#1565C0", relief="flat", padx=10, pady=3,
-                                  state="disabled", command=self._next_page)
-        self.next_btn.pack(side="left")
-
         self._load_all_members()
 
     def _on_tree_select(self):
@@ -139,8 +139,10 @@ class MemberForm(tk.Frame):
         _scroll.pack(side="right", fill="y")
         self._detail_container = tk.Frame(_canvas, bg="#FFFFFF", padx=20, pady=15)
         _win = _canvas.create_window((0, 0), window=self._detail_container, anchor="nw")
-        self._detail_container.bind("<Configure>",
-                                   lambda e: _canvas.configure(scrollregion=_canvas.bbox("all")))
+        self._detail_container.bind(
+            "<Configure>",
+            lambda e: _canvas.configure(scrollregion=_canvas.bbox("all"))
+            if _canvas.bbox("all") else None)
         _canvas.bind("<Configure>",
                      lambda e: _canvas.itemconfig(_win, width=e.width))
         _canvas.bind("<Enter>", lambda e: _canvas.bind_all(
@@ -200,7 +202,7 @@ class MemberForm(tk.Frame):
         self.finance_frame.pack(fill="x")
         self.finance_labels = {}
         for display, key in [("Total Paid", "total_paid"), ("Savings", "total_savings"),
-                              ("Shares", "total_shares"), ("Active Loan", "active_loan"),
+                              ("Active Loan", "active_loan"),
                               ("Loan Paid", "loan_paid"), ("Outstanding", "outstanding"),
                               ("Minutes Owed", "minutes_owed"), ("Fines Owed", "fines_owed"),
                               ("Other Charges Owed", "other_owed"),
@@ -276,7 +278,7 @@ class MemberForm(tk.Frame):
 
         info_row1 = tk.Frame(info_frame, bg="#E3F2FD")
         info_row1.pack(fill="x", pady=(0, 4))
-        for key, label in [("savings", "Savings"), ("shares", "Shares"),
+        for key, label in [("savings", "Savings"),
                            ("active_loan", "Active Loan"), ("outstanding", "Outstanding")]:
             f = tk.Frame(info_row1, bg="#E3F2FD")
             f.pack(side="left", padx=(0, 18))
@@ -370,7 +372,6 @@ class MemberForm(tk.Frame):
 
         summary = get_member_financial_summary(db_id)
         self.passbook_info_labels["savings"].config(text=format_currency(summary["total_savings"]))
-        self.passbook_info_labels["shares"].config(text=format_currency(summary["total_shares"]))
         self.passbook_info_labels["active_loan"].config(text=format_currency(summary["active_loan"]))
         self.passbook_info_labels["outstanding"].config(text=format_currency(summary["outstanding"]))
 
@@ -557,7 +558,6 @@ class MemberForm(tk.Frame):
         summary = get_member_financial_summary(db_id)
         self.finance_labels["total_paid"].config(text=format_currency(summary["total_paid"]))
         self.finance_labels["total_savings"].config(text=format_currency(summary["total_savings"]))
-        self.finance_labels["total_shares"].config(text=format_currency(summary["total_shares"]))
         self.finance_labels["active_loan"].config(text=format_currency(summary["active_loan"]))
         self.finance_labels["loan_paid"].config(text=format_currency(summary["loan_paid"]))
         self.finance_labels["outstanding"].config(text=format_currency(summary["outstanding"]))
@@ -800,7 +800,9 @@ class MemberForm(tk.Frame):
         canvas = tk.Canvas(win, bg="#FFFFFF", highlightthickness=0)
         scrollbar = ttk.Scrollbar(win, orient="vertical", command=canvas.yview)
         body = tk.Frame(canvas, bg="#FFFFFF", padx=20, pady=15)
-        body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        body.bind("<Configure>",
+                  lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+                  if canvas.bbox("all") else None)
         canvas.create_window((0, 0), window=body, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side="left", fill="both", expand=True)
@@ -969,7 +971,10 @@ class MemberForm(tk.Frame):
             tree.heading("name", text="Name")
             tree.column("mid", width=90, anchor="center")
             tree.column("name", width=160)
-            tree.pack(fill="both", expand=True)
+            vsb = ttk.Scrollbar(panel, orient="vertical", command=tree.yview)
+            tree.configure(yscrollcommand=vsb.set)
+            tree.pack(side="left", fill="both", expand=True)
+            vsb.pack(side="right", fill="y")
 
             def on_double_click(event, t=tree):
                 sel = t.selection()
@@ -1024,7 +1029,9 @@ class MemberForm(tk.Frame):
         canvas = tk.Canvas(win, bg="#FFFFFF", highlightthickness=0)
         scrollbar = ttk.Scrollbar(win, orient="vertical", command=canvas.yview)
         body = tk.Frame(canvas, bg="#FFFFFF", padx=20, pady=15)
-        body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        body.bind("<Configure>",
+                  lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+                  if canvas.bbox("all") else None)
         canvas.create_window((0, 0), window=body, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side="left", fill="both", expand=True)
@@ -1178,7 +1185,6 @@ class MemberForm(tk.Frame):
 
         fin_rows = [
             ("Total Savings", summary["total_savings"]),
-            ("Total Shares Value", summary["total_shares"]),
             ("Active Loan", summary["active_loan"]),
             ("Loan Repaid", summary["loan_paid"]),
             ("Loan Outstanding", summary["outstanding"]),

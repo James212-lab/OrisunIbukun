@@ -5,6 +5,7 @@ import datetime
 from database.connection import get_connection
 from engines.transaction_engine import (
     get_monthly_summary, get_member_financial_summary,
+    get_monthly_financial_statement,
 )
 from utils.helpers import format_currency, PaginationHelper
 from utils.date_picker import pick_date
@@ -26,12 +27,12 @@ REPORT_TYPES = [
     "Total Loans (Detailed)",
     "Withdrawn Members (Detailed)",
     "Monthly Money In/Out",
+    "Monthly Financial Statement",
     "Member Savings Statement",
     "Member Loan Statement",
     "Outstanding Loans Report",
     "Outstanding Charges Report",
     "Attendance Report",
-    "Share Register",
     "Headquarters Remittance Report",
     "Audit Log Report",
 ]
@@ -164,25 +165,9 @@ class ReportForm(tk.Frame):
         self.status_var = tk.StringVar(value="All")
         self.extra_widgets = {}
 
-        # Results tree
-        results_frame = tk.Frame(right, bg=WHITE)
-        results_frame.pack(fill="both", expand=True)
-
-        self.tree = ttk.Treeview(results_frame, show="headings", height=18)
-        tree_scroll_y = ttk.Scrollbar(results_frame, orient="vertical", command=self.tree.yview)
-        tree_scroll_x = ttk.Scrollbar(results_frame, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=tree_scroll_y.set, xscrollcommand=tree_scroll_x.set)
-        self.tree.pack(side="left", fill="both", expand=True)
-        tree_scroll_y.pack(side="right", fill="y")
-        tree_scroll_x.pack(side="bottom", fill="x")
-
-        style = ttk.Style()
-        style.configure("Treeview", font=("Segoe UI", 9), rowheight=26)
-        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
-
-        # Bottom buttons
+        # Bottom buttons — packed FIRST to reserve space
         btn_frame = tk.Frame(right, bg=WHITE, pady=6)
-        btn_frame.pack(fill="x")
+        btn_frame.pack(fill="x", side="bottom")
 
         tk.Button(btn_frame, text="Generate Report", font=("Segoe UI", 11, "bold"),
                   bg=BLUE, fg=WHITE, relief="flat", padx=14, pady=4,
@@ -193,6 +178,22 @@ class ReportForm(tk.Frame):
         tk.Button(btn_frame, text="Export CSV", font=("Segoe UI", 11, "bold"),
                   bg="#E65100", fg=WHITE, relief="flat", padx=14, pady=4,
                   command=self._export_csv).pack(side="left")
+
+        # Results tree — fills remaining space
+        results_frame = tk.Frame(right, bg=WHITE)
+        results_frame.pack(fill="both", expand=True)
+
+        self.tree = ttk.Treeview(results_frame, show="headings", height=10)
+        tree_scroll_y = ttk.Scrollbar(results_frame, orient="vertical", command=self.tree.yview)
+        tree_scroll_x = ttk.Scrollbar(results_frame, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=tree_scroll_y.set, xscrollcommand=tree_scroll_x.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        tree_scroll_y.pack(side="right", fill="y")
+        tree_scroll_x.pack(side="bottom", fill="x")
+
+        style = ttk.Style()
+        style.configure("Treeview", font=("Segoe UI", 9), rowheight=26)
+        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
 
     def _on_report_select(self, event):
         sel = self.report_listbox.curselection()
@@ -234,7 +235,7 @@ class ReportForm(tk.Frame):
             combo.set("All")
             combo.pack(side="left")
 
-        elif report_type in ("Monthly Money In/Out", "Attendance Report"):
+        elif report_type in ("Monthly Money In/Out", "Monthly Financial Statement", "Attendance Report"):
             tk.Label(self.param_frame, text="Note: Using date range above.",
                      font=("Segoe UI", 10, "italic"), fg="#666666",
                      bg=LIGHT_BLUE).pack(side="left")
@@ -292,12 +293,12 @@ class ReportForm(tk.Frame):
             "Total Loans (Detailed)": self._report_total_loans,
             "Withdrawn Members (Detailed)": self._report_withdrawn_members,
             "Monthly Money In/Out": self._report_monthly_money,
+            "Monthly Financial Statement": self._report_monthly_financial,
             "Member Savings Statement": self._report_savings_statement,
             "Member Loan Statement": self._report_loan_statement,
             "Outstanding Loans Report": self._report_outstanding_loans,
             "Outstanding Charges Report": self._report_outstanding_charges,
             "Attendance Report": self._report_attendance,
-            "Share Register": self._report_share_register,
             "Headquarters Remittance Report": self._report_remittance,
             "Audit Log Report": self._report_audit_log,
         }
@@ -313,10 +314,10 @@ class ReportForm(tk.Frame):
     def _report_total_members(self):
         date_from, date_to = self._get_date_range()
         status_filter = self.status_var.get() if hasattr(self, "status_var") else "All"
-        columns = ("member_id", "name", "status", "savings", "shares",
+        columns = ("member_id", "name", "status", "savings",
                    "loan_out", "owed", "joined")
         headings = {"member_id": "Member ID", "name": "Name", "status": "Category",
-                    "savings": "Savings", "shares": "Shares Value",
+                    "savings": "Savings",
                     "loan_out": "Loan Outstanding", "owed": "Charges Owed",
                     "joined": "Date Joined"}
         self._configure_tree(columns, headings)
@@ -339,22 +340,21 @@ class ReportForm(tk.Frame):
         sql += " ORDER BY full_name"
         rows = conn.execute(sql, params).fetchall()
 
-        t_sav = t_shr = t_out = t_owed = 0
+        t_sav = t_out = t_owed = 0
         for row in rows:
             s = get_member_financial_summary(row["id"])
             owed = s.get("total_owed", 0)
             t_sav += s["total_savings"]
-            t_shr += s["total_shares"]
             t_out += s["outstanding"]
             t_owed += owed
             self.tree.insert("", "end", values=(
                 row["member_id"], row["full_name"], row["status"],
-                format_currency(s["total_savings"]), format_currency(s["total_shares"]),
+                format_currency(s["total_savings"]),
                 format_currency(s["outstanding"]), format_currency(owed),
                 row["date_joined"] or "—"))
         self.tree.insert("", "end", values=(
             f"TOTAL ({len(rows)})", "", "", format_currency(t_sav),
-            format_currency(t_shr), format_currency(t_out),
+            format_currency(t_out),
             format_currency(t_owed), ""))
 
     def _report_total_payments(self):
@@ -369,7 +369,7 @@ class ReportForm(tk.Frame):
                         t.description, m.full_name
                  FROM transactions t LEFT JOIN members m ON t.member_id = m.id
                  WHERE t.status = 'Posted'
-                   AND t.transaction_type IN ('Savings','Share Contribution',
+                   AND t.transaction_type IN ('Savings',
                        'Loan Repayment','Charge Payment','Other','Entrance Fee')"""
         params = []
         if date_from:
@@ -487,10 +487,10 @@ class ReportForm(tk.Frame):
     def _report_withdrawn_members(self):
         date_from, date_to = self._get_date_range()
         columns = ("member_id", "name", "status", "exited", "reason",
-                   "savings", "shares", "loan_out", "owed", "joined")
+                   "savings", "loan_out", "owed", "joined")
         headings = {"member_id": "Member ID", "name": "Name", "status": "Category",
                     "exited": "Date Exited", "reason": "Exit Reason",
-                    "savings": "Savings Balance", "shares": "Shares Value",
+                    "savings": "Savings Balance",
                     "loan_out": "Loan Outstanding", "owed": "Charges Owed",
                     "joined": "Date Joined"}
         self._configure_tree(columns, headings)
@@ -510,12 +510,11 @@ class ReportForm(tk.Frame):
         sql += " ORDER BY m.date_ended ASC, m.full_name"
         rows = conn.execute(sql, params).fetchall()
 
-        t_sav = t_shr = t_out = t_owed = 0
+        t_sav = t_out = t_owed = 0
         for row in rows:
             s = get_member_financial_summary(row["id"])
             owed = s.get("total_owed", 0)
             t_sav += s["total_savings"]
-            t_shr += s["total_shares"]
             t_out += s["outstanding"]
             t_owed += owed
             reason = row["exit_reason"] or "—"
@@ -525,13 +524,12 @@ class ReportForm(tk.Frame):
                 row["member_id"], row["full_name"], row["status"],
                 row["date_ended"] or "—", reason,
                 format_currency(s["total_savings"]),
-                format_currency(s["total_shares"]),
                 format_currency(s["outstanding"]),
                 format_currency(owed), row["date_joined"] or "—"))
         if rows:
             self.tree.insert("", "end", values=(
                 f"TOTAL ({len(rows)})", "", "", "", "",
-                format_currency(t_sav), format_currency(t_shr),
+                format_currency(t_sav),
                 format_currency(t_out), format_currency(t_owed), ""))
 
     def _report_monthly_money(self):
@@ -578,6 +576,77 @@ class ReportForm(tk.Frame):
         self.tree.insert("", "end", values=(
             "TOTAL", format_currency(t_in), "", "", "", "",
             format_currency(t_out), format_currency(t_net)))
+
+    def _report_monthly_financial(self):
+        date_from, date_to = self._get_date_range()
+        columns = ("month", "in_savings", "in_minutes", "in_absentism",
+                   "in_lateness", "in_others", "in_hq", "amount_in",
+                   "out_expenses", "out_loans", "out_hq", "amount_out", "net")
+        headings = {
+            "month": "Month", "in_savings": "Savings", "in_minutes": "Minutes",
+            "in_absentism": "Absentism", "in_lateness": "Lateness",
+            "in_others": "Others", "in_hq": "HQ Funding",
+            "amount_in": "Amount In", "out_expenses": "Expenses",
+            "out_loans": "Loans Disbursed", "out_hq": "HQ Remittance",
+            "amount_out": "Amount Out", "net": "Net Retained",
+        }
+        self._configure_tree(columns, headings)
+
+        conn = get_connection()
+        sql = """SELECT substr(date, 1, 7) as ym FROM transactions
+                 WHERE status = 'Posted'"""
+        params = []
+        if date_from:
+            sql += " AND date >= ?"
+            params.append(date_from)
+        if date_to:
+            sql += " AND date <= ?"
+            params.append(date_to)
+        sql += " GROUP BY ym ORDER BY ym ASC"
+        months = [r["ym"] for r in conn.execute(sql, params).fetchall()]
+
+        t_ins = {k: 0 for k in ["in_savings", "in_minutes", "in_absentism",
+                                  "in_lateness", "in_others", "in_hq", "amount_in"]}
+        t_outs = {k: 0 for k in ["out_expenses", "out_loans", "out_hq", "amount_out"]}
+        t_net = 0
+        for ym in months:
+            if not ym:
+                continue
+            year, month = int(ym[:4]), int(ym[5:7])
+            stmt = get_monthly_financial_statement(year, month)
+            for k in t_ins:
+                t_ins[k] += stmt[k]
+            for k in t_outs:
+                t_outs[k] += stmt[k]
+            t_net += stmt["net"]
+            self.tree.insert("", "end", values=(
+                ym, format_currency(stmt["in_savings"]),
+                format_currency(stmt["in_minutes"]),
+                format_currency(stmt["in_absentism"]),
+                format_currency(stmt["in_lateness"]),
+                format_currency(stmt["in_others"]),
+                format_currency(stmt["in_hq"]),
+                format_currency(stmt["amount_in"]),
+                format_currency(stmt["out_expenses"]),
+                format_currency(stmt["out_loans"]),
+                format_currency(stmt["out_hq"]),
+                format_currency(stmt["amount_out"]),
+                format_currency(stmt["net"]),
+            ))
+        self.tree.insert("", "end", values=(
+            "TOTAL", format_currency(t_ins["in_savings"]),
+            format_currency(t_ins["in_minutes"]),
+            format_currency(t_ins["in_absentism"]),
+            format_currency(t_ins["in_lateness"]),
+            format_currency(t_ins["in_others"]),
+            format_currency(t_ins["in_hq"]),
+            format_currency(t_ins["amount_in"]),
+            format_currency(t_outs["out_expenses"]),
+            format_currency(t_outs["out_loans"]),
+            format_currency(t_outs["out_hq"]),
+            format_currency(t_outs["amount_out"]),
+            format_currency(t_net),
+        ))
 
     def _report_savings_statement(self):
         if not self.selected_member_db_id:
@@ -746,24 +815,6 @@ class ReportForm(tk.Frame):
                 row["member_id"], row["full_name"], row["status"]))
         if not rows:
             self.tree.insert("", "end", values=("—", "No attendance records", "—", "—", "—"))
-
-    def _report_share_register(self):
-        columns = ("member_id", "name", "shares", "value")
-        headings = {"member_id": "Member ID", "name": "Name",
-                    "shares": "Total Shares", "value": "Share Value"}
-        self._configure_tree(columns, headings)
-
-        conn = get_connection()
-        rows = conn.execute(
-            """SELECT member_id, full_name, share_count, share_value
-               FROM members WHERE status = 'Active' ORDER BY full_name""").fetchall()
-
-        for row in rows:
-            self.tree.insert("", "end", values=(
-                row["member_id"], row["full_name"],
-                row["share_count"], format_currency(row["share_value"])))
-        if not rows:
-            self.tree.insert("", "end", values=("—", "No active members", "—", "—"))
 
     def _report_remittance(self):
         date_from, date_to = self._get_date_range()

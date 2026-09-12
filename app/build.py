@@ -1,4 +1,5 @@
 """Build script for ORISUN IBUKUN - Owode Unit."""
+import hashlib
 import subprocess
 import sys
 import os
@@ -28,6 +29,7 @@ cmd = [
     "--hidden-import", "engines",
     "--hidden-import", "engines.transaction_engine",
     "--hidden-import", "engines.backup_engine",
+    "--hidden-import", "engines.update_engine",
     "--hidden-import", "models",
     "--hidden-import", "ui",
     "--hidden-import", "ui.login_form",
@@ -68,6 +70,17 @@ if result.returncode == 0:
         print(f"\nBuild successful!")
         print(f"Executable: {exe_path}")
         print(f"Size: {size_mb:.1f} MB")
+
+        # Print SHA-256 for release notes
+        h = hashlib.sha256()
+        with open(exe_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        sha = h.hexdigest()
+        print(f"\n{'='*60}")
+        print(f"SHA256: {sha}")
+        print(f"{'='*60}")
+        print("Copy the above line into your GitHub Release notes.")
     else:
         print("\nBuild completed but exe not found at expected path.")
 else:

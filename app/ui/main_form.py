@@ -9,6 +9,10 @@ import datetime
 import traceback
 
 
+BLUE = "#1565C0"
+LIGHT_BLUE = "#E3F2FD"
+
+
 class MainForm(SessionMixin, tk.Tk):
     def __init__(self, user_id: int, username: str, role_name: str):
         super().__init__()
@@ -102,9 +106,11 @@ class MainForm(SessionMixin, tk.Tk):
 
         try:
             today = datetime.date.today()
-            year, month = today.year, today.month
-            month_name = today.strftime("%B %Y")
-            month_str = f"{year}-{month:02d}"
+            if not hasattr(self, "_dash_year"):
+                self._dash_year = today.year
+                self._dash_month = today.month
+            year, month = self._dash_year, self._dash_month
+            month_name = datetime.date(year, month, 1).strftime("%B %Y")
 
             conn = get_connection()
             cur = conn.execute("SELECT COUNT(*) as cnt FROM members WHERE status = 'Active'")
@@ -113,9 +119,6 @@ class MainForm(SessionMixin, tk.Tk):
             cur = conn.execute(
                 "SELECT COALESCE(SUM(amount), 0) as t FROM savings WHERE type = 'Savings'")
             total_savings = cur.fetchone()["t"]
-            cur = conn.execute(
-                "SELECT COALESCE(SUM(share_value), 0) as t FROM members WHERE status = 'Active'")
-            total_shares = cur.fetchone()["t"]
 
             last_meeting = conn.execute(
                 "SELECT id, meeting_number, date FROM meetings ORDER BY date DESC, id DESC LIMIT 1"
@@ -131,15 +134,8 @@ class MainForm(SessionMixin, tk.Tk):
             else:
                 present, absent, meeting_label = 0, 0, "No meetings yet"
 
-            from engines.transaction_engine import get_monthly_summary
-            summary = get_monthly_summary(year, month)
-
-            cur = conn.execute(
-                """SELECT COALESCE(SUM(amount), 0) as t FROM transactions
-                   WHERE transaction_type = 'Loan Repayment'
-                   AND strftime('%Y-%m', date) = ? AND status = 'Posted'""",
-                (month_str,))
-            repaid_month = cur.fetchone()["t"]
+            from engines.transaction_engine import get_monthly_financial_statement
+            stmt = get_monthly_financial_statement(year, month)
 
             cur = conn.execute(
                 """SELECT COALESCE(SUM(outstanding_principal), 0) as p,
@@ -163,36 +159,128 @@ class MainForm(SessionMixin, tk.Tk):
         stats = tk.Frame(self.main_area, bg="#FFFFFF", padx=20, pady=15)
         stats.pack(fill=tk.BOTH, expand=True)
 
-        tk.Label(stats, text=f"THIS MONTH — {month_name}", bg="#FFFFFF",
-                 fg="#1565C0", font=("Segoe UI", 14, "bold")).pack(anchor=tk.W, pady=(0, 2))
+        # Month navigation bar
+        nav = tk.Frame(stats, bg="#FFFFFF")
+        nav.pack(fill="x", pady=(0, 10))
+        tk.Button(nav, text="<", font=("Segoe UI", 12, "bold"), bg=LIGHT_BLUE, fg=BLUE,
+                  relief="flat", padx=10, command=self._dash_prev_month).pack(side="left")
+        tk.Label(nav, text=month_name, bg="#FFFFFF", fg="#1565C0",
+                 font=("Segoe UI", 14, "bold")).pack(side="left", padx=15)
+        tk.Button(nav, text=">", font=("Segoe UI", 12, "bold"), bg=LIGHT_BLUE, fg=BLUE,
+                  relief="flat", padx=10, command=self._dash_next_month).pack(side="left")
+        tk.Button(nav, text="This Month", font=("Segoe UI", 10), bg="#E3F2FD", fg=BLUE,
+                  relief="flat", padx=8, command=self._dash_this_month).pack(side="left", padx=20)
+
         tk.Label(stats, text=f"Last meeting: {meeting_label}  •  Present: {present}  •  Absent: {absent}",
                  bg="#FFFFFF", fg="#666666", font=("Segoe UI", 11)).pack(anchor=tk.W, pady=(0, 10))
 
-        grid = tk.Frame(stats, bg="#FFFFFF")
-        grid.pack(fill=tk.BOTH, expand=True)
+        # Amount In / Amount Out columns
+        io_frame = tk.Frame(stats, bg="#FFFFFF")
+        io_frame.pack(fill=tk.BOTH, expand=True)
 
-        items = [
+        # ── IN column ──
+        in_frame = tk.LabelFrame(io_frame, text="  AMOUNT IN  ", font=("Segoe UI", 11, "bold"),
+                                 fg="#2E7D32", bg="#FFFFFF", padx=10, pady=8)
+        in_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
+
+        in_items = [
+            ("Savings", stmt["in_savings"]),
+            ("Minutes", stmt["in_minutes"]),
+            ("Absentism", stmt["in_absentism"]),
+            ("Lateness", stmt["in_lateness"]),
+            ("Others", stmt["in_others"]),
+            ("HQ Funding", stmt["in_hq"]),
+        ]
+        for label, value in in_items:
+            row = tk.Frame(in_frame, bg="#FFFFFF")
+            row.pack(fill="x", pady=1)
+            tk.Label(row, text=label, font=("Segoe UI", 10), fg="#666666",
+                     bg="#FFFFFF", width=14, anchor="w").pack(side="left")
+            tk.Label(row, text=format_currency(value), font=("Segoe UI", 10, "bold"),
+                     fg="#2E7D32", bg="#FFFFFF", anchor="e").pack(side="right")
+
+        tk.Frame(in_frame, height=1, bg="#CCCCCC").pack(fill="x", pady=4)
+        tot_in = tk.Frame(in_frame, bg="#E8F5E9")
+        tot_in.pack(fill="x")
+        tk.Label(tot_in, text="AMOUNT IN", font=("Segoe UI", 11, "bold"),
+                 fg="#2E7D32", bg="#E8F5E9").pack(side="left")
+        tk.Label(tot_in, text=format_currency(stmt["amount_in"]),
+                 font=("Segoe UI", 13, "bold"), fg="#2E7D32", bg="#E8F5E9").pack(side="right")
+
+        # ── OUT column ──
+        out_frame = tk.LabelFrame(io_frame, text="  AMOUNT OUT  ", font=("Segoe UI", 11, "bold"),
+                                  fg="#C62828", bg="#FFFFFF", padx=10, pady=8)
+        out_frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
+
+        out_items = [
+            ("Expenses", stmt["out_expenses"]),
+            ("Loans Disbursed", stmt["out_loans"]),
+            ("HQ Remittance", stmt["out_hq"]),
+        ]
+        for label, value in out_items:
+            row = tk.Frame(out_frame, bg="#FFFFFF")
+            row.pack(fill="x", pady=1)
+            tk.Label(row, text=label, font=("Segoe UI", 10), fg="#666666",
+                     bg="#FFFFFF", width=14, anchor="w").pack(side="left")
+            tk.Label(row, text=format_currency(value), font=("Segoe UI", 10, "bold"),
+                     fg="#C62828", bg="#FFFFFF", anchor="e").pack(side="right")
+
+        tk.Frame(out_frame, height=1, bg="#CCCCCC").pack(fill="x", pady=4)
+        tot_out = tk.Frame(out_frame, bg="#FFEBEE")
+        tot_out.pack(fill="x")
+        tk.Label(tot_out, text="AMOUNT OUT", font=("Segoe UI", 11, "bold"),
+                 fg="#C62828", bg="#FFEBEE").pack(side="left")
+        tk.Label(tot_out, text=format_currency(stmt["amount_out"]),
+                 font=("Segoe UI", 13, "bold"), fg="#C62828", bg="#FFEBEE").pack(side="right")
+
+        # ── Net Retained ──
+        net_frame = tk.Frame(stats, bg="#E3F2FD", padx=12, pady=10, relief=tk.RAISED, bd=1)
+        net_frame.pack(fill="x", pady=(10, 5))
+        net_color = "#2E7D32" if stmt["net"] >= 0 else "#C62828"
+        tk.Label(net_frame, text="Net Retained:", bg="#E3F2FD", fg="#666666",
+                 font=("Segoe UI", 12, "bold")).pack(side="left")
+        tk.Label(net_frame, text=format_currency(stmt["net"]),
+                 bg="#E3F2FD", fg=net_color,
+                 font=("Segoe UI", 16, "bold")).pack(side="right")
+
+        # ── Membership summary row ──
+        summary_row = tk.Frame(stats, bg="#FFFFFF")
+        summary_row.pack(fill="x", pady=(10, 0))
+        summary_items = [
             ("Active Members", str(total_members)),
             ("Total Savings", format_currency(total_savings)),
-            ("Total Shares Value", format_currency(total_shares)),
-            ("Money In (Month)", format_currency(summary["money_in"])),
-            ("Loans Disbursed (Month)", format_currency(summary["loans_disbursed"])),
-            ("Repaid This Month", format_currency(repaid_month)),
             ("Outstanding Loans", format_currency(outstanding)),
-            ("Charges Owed (Fines/Minutes)", format_currency(charges_owed)),
-            ("Remitted to HQ (Month)", format_currency(summary["remittance"])),
-            ("Net Cash Movement (Month)", format_currency(summary["net"])),
+            ("Charges Owed", format_currency(charges_owed)),
         ]
-
-        for i, (label, value) in enumerate(items):
-            r, c = divmod(i, 4)
-            card = tk.Frame(grid, bg="#E3F2FD", padx=12, pady=10, relief=tk.RAISED, bd=1)
-            card.grid(row=r, column=c, padx=5, pady=5, sticky=tk.NSEW)
-            grid.columnconfigure(c, weight=1)
+        for i, (label, value) in enumerate(summary_items):
+            card = tk.Frame(summary_row, bg="#E3F2FD", padx=8, pady=6, relief=tk.RAISED, bd=1)
+            card.pack(side="left", fill="both", expand=True, padx=3)
             tk.Label(card, text=label, bg="#E3F2FD", fg="#666666",
-                     font=("Segoe UI", 10)).pack(anchor=tk.W)
+                     font=("Segoe UI", 9)).pack(anchor=tk.W)
             tk.Label(card, text=value, bg="#E3F2FD", fg="#1565C0",
-                     font=("Segoe UI", 16, "bold")).pack(anchor=tk.W)
+                     font=("Segoe UI", 12, "bold")).pack(anchor=tk.W)
+
+    def _dash_prev_month(self):
+        if self._dash_month == 1:
+            self._dash_month = 12
+            self._dash_year -= 1
+        else:
+            self._dash_month -= 1
+        self._show_dashboard()
+
+    def _dash_next_month(self):
+        if self._dash_month == 12:
+            self._dash_month = 1
+            self._dash_year += 1
+        else:
+            self._dash_month += 1
+        self._show_dashboard()
+
+    def _dash_this_month(self):
+        today = datetime.date.today()
+        self._dash_year = today.year
+        self._dash_month = today.month
+        self._show_dashboard()
 
     def _open_module(self, module_name):
         for w in self.main_area.winfo_children():
