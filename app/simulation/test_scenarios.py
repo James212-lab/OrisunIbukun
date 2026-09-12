@@ -24,6 +24,7 @@ def run_all(h: SimHarness):
     _migration_dry_run(h)
     _ui_smoke(h)
     _adversarial(h)
+    _pyflakes_scan(h)
 
 
 def _foundation(h: SimHarness):
@@ -415,7 +416,7 @@ def _update_engine(h: SimHarness):
     )
     from constants import APP_VERSION, GITHUB_REPO
 
-    h.assert_eq("APP_VERSION constant", APP_VERSION, "1.1.1")
+    h.assert_eq("APP_VERSION constant", APP_VERSION, "1.1.2")
     h.assert_eq("GITHUB_REPO constant", GITHUB_REPO, "James212-lab/OrisunIbukun")
 
     # Version parsing
@@ -974,3 +975,31 @@ def _adversarial(h: SimHarness):
                 loan2["outstanding_principal"], 10000.0)
     h.assert_eq("After 10k pay: interest = 2k",
                 loan2["outstanding_interest"], 2000.0)
+
+
+def _pyflakes_scan(h: SimHarness):
+    import subprocess
+    import os
+
+    app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    py_files = []
+    for root, _, files in os.walk(app_dir):
+        if "simulation" in root or "build" in root or "dist" in root or "__pycache__" in root:
+            continue
+        for f in files:
+            if f.endswith(".py"):
+                py_files.append(os.path.join(root, f))
+
+    result = subprocess.run(
+        ["python", "-m", "pyflakes"] + py_files,
+        capture_output=True, text=True, timeout=30,
+    )
+
+    undefined_names = []
+    for line in result.stdout.splitlines():
+        if "undefined name" in line:
+            undefined_names.append(line.strip())
+
+    h.assert_eq("Pyflakes: zero undefined names",
+                len(undefined_names), 0,
+                detail=str(undefined_names) if undefined_names else "")

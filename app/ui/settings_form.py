@@ -305,9 +305,11 @@ class SettingsForm(tk.Frame):
                 info = check_for_update()
                 self.after(0, lambda: self._on_update_result(info))
             except UpdateError as exc:
-                self.after(0, lambda: self._on_update_error(str(exc)))
+                _msg = str(exc)
+                self.after(0, lambda: self._on_update_error(_msg))
             except Exception as exc:
-                self.after(0, lambda: self._on_update_error(str(exc)))
+                _msg2 = str(exc)
+                self.after(0, lambda: self._on_update_error(_msg2))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -402,8 +404,9 @@ class SettingsForm(tk.Frame):
                 self.after(0, lambda: self._on_download_done(
                     dest, progress_win))
             except UpdateError as exc:
+                _fail_msg = str(exc)
                 self.after(0, lambda: self._on_download_fail(
-                    str(exc), progress_win))
+                    _fail_msg, progress_win))
 
         threading.Thread(target=_do_download, daemon=True).start()
 

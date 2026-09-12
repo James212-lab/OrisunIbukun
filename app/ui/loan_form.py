@@ -19,6 +19,7 @@ from errors import handle_error, safe_execute, ValidationError
 from constants import (
     LOAN_STATUS_APPLIED, LOAN_STATUS_APPROVED, LOAN_STATUS_DISBURSED,
     LOAN_STATUS_ACTIVE, LOAN_STATUS_OVERDUE, LOAN_STATUS_COMPLETED,
+    REPAY_MONTHLY, REPAY_WEEKLY,
 )
 from permissions import has_permission, PERM_REVERSE_TXN, PERM_LOANS_MANAGE
 
