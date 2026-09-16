@@ -12,6 +12,7 @@ def run_all(h: SimHarness):
     _loan_fees_money_in(h)
     _external_guarantors(h)
     _attendance_charges(h)
+    _passbook_charges_sync(h)
     _reversals(h)
     _treasury(h)
     _shares_neutralized(h)
@@ -293,6 +294,39 @@ def _attendance_charges(h: SimHarness):
     h._mtg_id = mtg_id
 
 
+def _passbook_charges_sync(h: SimHarness):
+    """Verify that passbook input also updates member_charges."""
+    from engines.transaction_engine import (
+        apply_minutes_levy, save_passbook_input, get_member_financial_summary,
+    )
+    from database.connection import get_connection
+
+    # Create meeting and apply minutes levy (charges ALL active members)
+    from engines.transaction_engine import create_meeting
+    mtg_id = create_meeting(date="2026-04-01", notes="Sync test",
+                            created_by=h._admin_id, allow_backdate=True)
+    levy_n = apply_minutes_levy(mtg_id, 3000, entered_by=h._admin_id)
+    h.assert_true("Levy applied for sync test", levy_n >= 1)
+
+    # Check charge exists before passbook input
+    summary_before = get_member_financial_summary(h._m1["id"])
+    h.assert_true("Minutes owed before passbook",
+                  summary_before["minutes_owed"] > 0)
+
+    # Enter passbook input for Minutes — should also update member_charges
+    ok = save_passbook_input(h._m1["id"], "2026-04-01",
+                             {"minutes": 3000},
+                             entered_by=h._admin_id, allow_backdate=True)
+    h.assert_true("Passbook input saved", ok)
+
+    # Verify charge was updated (oldest-first: March 2000 paid first, April gets 1000)
+    summary_after = get_member_financial_summary(h._m1["id"])
+    h.assert_eq("Minutes paid after passbook",
+                summary_after["minutes_paid"], 3000)
+    h.assert_true("Minutes owed reduced after passbook",
+                  summary_after["minutes_owed"] < summary_before["minutes_owed"])
+
+
 def _reversals(h: SimHarness):
     from engines.transaction_engine import (
         reverse_transaction, get_member_passbook,
@@ -416,7 +450,7 @@ def _update_engine(h: SimHarness):
     )
     from constants import APP_VERSION, GITHUB_REPO
 
-    h.assert_eq("APP_VERSION constant", APP_VERSION, "1.1.2")
+    h.assert_eq("APP_VERSION constant", APP_VERSION, "1.2.1")
     h.assert_eq("GITHUB_REPO constant", GITHUB_REPO, "James212-lab/OrisunIbukun")
 
     # Version parsing

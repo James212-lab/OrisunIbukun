@@ -1270,7 +1270,7 @@ td,th{{border:1px solid #bbb;padding:6px 10px;text-align:left}}
                  fg="#1565C0", bg="#FFFFFF").pack(anchor="w", padx=20, pady=(15, 5))
         cat_var = tk.StringVar(value="Minutes")
         ttk.Combobox(win, textvariable=cat_var,
-                     values=["Minutes", "Other"],
+                     values=["Minutes", "Absentism", "Fines", "ICT", "AGM", "Other"],
                      state="readonly", font=("Segoe UI", 11), width=30).pack(padx=20)
 
         tk.Label(win, text="Amount:", font=("Segoe UI", 12), bg="#FFFFFF").pack(
@@ -1300,9 +1300,9 @@ td,th{{border:1px solid #bbb;padding:6px 10px;text-align:left}}
                 category = cat_var.get()
                 method = method_var.get()
                 uid = self.current_user.get("id")
-                if category == "Minutes":
+                if category in ("Minutes", "Absentism", "Fines", "ICT", "AGM"):
                     return record_charge_payment(
-                        self.selected_member_db_id, amount, "Minutes",
+                        self.selected_member_db_id, amount, category,
                         payment_method=method, entered_by=uid)
                 else:
                     return record_other_payment(

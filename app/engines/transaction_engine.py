@@ -1099,7 +1099,7 @@ def save_passbook_input(member_db_id: int, date_str: str, categories: dict,
                         payment_method: str = "Cash",
                         entered_by: int = None,
                         allow_backdate: bool = False) -> bool:
-    """Save passbook category inputs as Money-In transactions.
+    """Save passbook category inputs as Money-In transactions AND update charges.
 
     categories: {category_key: amount} e.g. {"minutes": 2000, "ict": 1000}
     category_key must be a key from PASSBOOK_FEE_COLUMNS or a custom key.
@@ -1108,6 +1108,9 @@ def save_passbook_input(member_db_id: int, date_str: str, categories: dict,
       - amount > 0 and no existing txn  -> insert new TXN_CHARGE_PAYMENT
       - amount > 0 and existing txn differs -> reverse old, insert new
       - amount 0/empty and existing txn -> reverse it
+
+    Also applies the payment to member_charges so Billed/Paid/Outstanding
+    stays in sync with the passbook view.
     Returns True if any changes were made.
     """
     conn = get_connection()
@@ -1115,6 +1118,7 @@ def save_passbook_input(member_db_id: int, date_str: str, categories: dict,
     changed = False
 
     col_to_label = {k: v for k, v, _ in PASSBOOK_FEE_COLUMNS}
+    col_to_charge_type = {k: ctype for k, _, ctype in PASSBOOK_FEE_COLUMNS}
 
     with conn:
         meeting = conn.execute(
@@ -1166,6 +1170,12 @@ def save_passbook_input(member_db_id: int, date_str: str, categories: dict,
                         description=f"{label} input",
                         entered_by=entered_by, date=date_str)
                     changed = True
+
+                # ── Sync member_charges: apply payment oldest-first ──
+                charge_type = col_to_charge_type.get(col_key)
+                if charge_type and amt > 0:
+                    _apply_passbook_payment(
+                        conn, member_db_id, charge_type, amt, date_str)
             else:
                 if existing:
                     reverse_transaction(
@@ -1175,6 +1185,39 @@ def save_passbook_input(member_db_id: int, date_str: str, categories: dict,
                     changed = True
 
     return changed
+
+
+def _apply_passbook_payment(conn, member_db_id: int, charge_type: str,
+                            amount: float, date_str: str):
+    """Apply a passbook payment to member_charges (oldest-first).
+
+    This ensures the Billed/Paid/Outstanding breakdown stays in sync
+    with the passbook view. Idempotent — safe to call repeatedly.
+    """
+    if amount <= 0:
+        return
+    rows = conn.execute(
+        """SELECT id, amount, amount_paid FROM member_charges
+           WHERE member_id = ? AND charge_type = ? AND status != 'Paid'
+           ORDER BY created_at ASC, id ASC""",
+        (member_db_id, charge_type),
+    ).fetchall()
+    remaining = amount
+    for r in rows:
+        if remaining <= 0:
+            break
+        due = (r["amount"] or 0) - (r["amount_paid"] or 0)
+        if due <= 0:
+            continue
+        pay = min(due, remaining)
+        new_paid = (r["amount_paid"] or 0) + pay
+        total = r["amount"] or 0
+        status = CHARGE_STATUS_PAID if new_paid >= total - 1e-9 else CHARGE_STATUS_PARTIAL
+        conn.execute(
+            "UPDATE member_charges SET amount_paid = ?, status = ? WHERE id = ?",
+            (new_paid, status, r["id"]),
+        )
+        remaining -= pay
 
 
 def add_loan_document(loan_db_id: int, member_db_id: int, doc_name: str,
