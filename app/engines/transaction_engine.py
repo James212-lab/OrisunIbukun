@@ -1151,20 +1151,21 @@ def save_passbook_input(member_db_id: int, date_str: str, categories: dict,
             ).fetchone()
 
             if amt > 0:
+                txn_id = None
                 if existing:
                     if abs((existing["amount"] or 0) - amt) > 0.01:
                         reverse_transaction(
                             existing["transaction_id"],
                             "Passbook input update",
                             entered_by or 0, conn=conn)
-                        record_transaction(
+                        txn_id = record_transaction(
                             conn, member_db_id, TXN_CHARGE_PAYMENT, amt,
                             meeting_id, payment_method,
                             description=f"{label} input",
                             entered_by=entered_by, date=date_str)
                         changed = True
                 else:
-                    record_transaction(
+                    txn_id = record_transaction(
                         conn, member_db_id, TXN_CHARGE_PAYMENT, amt,
                         meeting_id, payment_method,
                         description=f"{label} input",
@@ -1175,7 +1176,8 @@ def save_passbook_input(member_db_id: int, date_str: str, categories: dict,
                 charge_type = col_to_charge_type.get(col_key)
                 if charge_type and amt > 0:
                     _apply_passbook_payment(
-                        conn, member_db_id, charge_type, amt, date_str)
+                        conn, member_db_id, charge_type, amt, date_str,
+                        txn_id=txn_id or "")
             else:
                 if existing:
                     reverse_transaction(
@@ -1188,16 +1190,18 @@ def save_passbook_input(member_db_id: int, date_str: str, categories: dict,
 
 
 def _apply_passbook_payment(conn, member_db_id: int, charge_type: str,
-                            amount: float, date_str: str):
+                            amount: float, date_str: str,
+                            txn_id: str = ""):
     """Apply a passbook payment to member_charges (oldest-first).
 
-    This ensures the Billed/Paid/Outstanding breakdown stays in sync
-    with the passbook view. Idempotent — safe to call repeatedly.
+    Creates charge_payment_applications records so that reversals
+    properly undo the charge payment. Idempotent — safe to call
+    repeatedly for the same transaction.
     """
     if amount <= 0:
         return
     rows = conn.execute(
-        """SELECT id, amount, amount_paid FROM member_charges
+        """SELECT id, charge_id, amount, amount_paid FROM member_charges
            WHERE member_id = ? AND charge_type = ? AND status != 'Paid'
            ORDER BY created_at ASC, id ASC""",
         (member_db_id, charge_type),
@@ -1217,6 +1221,12 @@ def _apply_passbook_payment(conn, member_db_id: int, charge_type: str,
             "UPDATE member_charges SET amount_paid = ?, status = ? WHERE id = ?",
             (new_paid, status, r["id"]),
         )
+        if txn_id:
+            conn.execute(
+                """INSERT INTO charge_payment_applications
+                   (txn_id, charge_id, amount_applied) VALUES (?, ?, ?)""",
+                (txn_id, r["charge_id"], pay),
+            )
         remaining -= pay
 
 
