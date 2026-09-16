@@ -192,7 +192,6 @@ class MainForm(SessionMixin, tk.Tk):
             ("Savings", stmt["in_savings"]),
             ("Minutes", stmt["in_minutes"]),
             ("Absentism", stmt["in_absentism"]),
-            ("Lateness", stmt["in_lateness"]),
             ("Others", stmt["in_others"]),
             ("HQ Funding", stmt["in_hq"]),
         ]

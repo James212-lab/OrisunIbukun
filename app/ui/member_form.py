@@ -290,12 +290,15 @@ class MemberForm(tk.Frame):
             self.passbook_info_labels[key] = val
 
         info_row2 = tk.Frame(info_frame, bg="#E3F2FD")
-        info_row2.pack(fill="x")
-        for key, label in [("minutes_owed", "Minutes"), ("ict_owed", "ICT"),
-                           ("agm_owed", "AGM"), ("lateness_owed", "Lateness"),
-                           ("absentism_owed", "Absentism"), ("fines_owed", "Fines")]:
+        info_row2.pack(fill="x", pady=(0, 4))
+        for key, label in [("minutes_billed", "Min Billed"), ("minutes_paid", "Min Paid"),
+                           ("minutes_owed", "Min Outst."),
+                           ("absentism_billed", "Abs Billed"), ("absentism_paid", "Abs Paid"),
+                           ("absentism_owed", "Abs Outst."),
+                           ("fines_billed", "Fine Billed"), ("fines_paid", "Fine Paid"),
+                           ("fines_owed", "Fine Outst.")]:
             f = tk.Frame(info_row2, bg="#E3F2FD")
-            f.pack(side="left", padx=(0, 14))
+            f.pack(side="left", padx=(0, 10))
             tk.Label(f, text=f"{label}:", font=("Segoe UI", 9, "bold"),
                      fg="#1565C0", bg="#E3F2FD").pack(side="left")
             val = tk.Label(f, text="--", font=("Segoe UI", 9),
@@ -311,13 +314,13 @@ class MemberForm(tk.Frame):
         self._passbook_cols = ["date", "savings", "loan_repayment"]
         for col_key, label, _ctype in PASSBOOK_FEE_COLUMNS:
             self._passbook_cols.append(col_key)
-        self._passbook_cols.extend(["loan_collected", "outstanding", "other", "method", "desc"])
+        self._passbook_cols.extend(["loan_collected", "outstanding", "other", "desc"])
 
         self.book_tree = ttk.Treeview(book_frame, columns=self._passbook_cols,
                                       show="headings", height=10)
         col_widths = {"date": 85, "savings": 90, "loan_repayment": 90,
                       "loan_collected": 90, "outstanding": 95, "other": 80,
-                      "method": 85, "desc": 130}
+                      "desc": 130}
         for col_key, _label, _ctype in PASSBOOK_FEE_COLUMNS:
             col_widths[col_key] = 80
 
@@ -334,8 +337,6 @@ class MemberForm(tk.Frame):
                 txt = "Loan Outst."
             elif col == "other":
                 txt = "Other"
-            elif col == "method":
-                txt = "Method"
             elif col == "desc":
                 txt = "Details"
             else:
@@ -407,17 +408,19 @@ class MemberForm(tk.Frame):
                 format_currency(r["loan_collected"]) if r["loan_collected"] else "--",
                 format_currency(r["loan_outstanding"]) if r["loan_outstanding"] != "" else "--",
                 format_currency(r["other"]) if r["other"] else "--",
-                r.get("method") or "--",
                 (r["description"] or "")[:30],
             ])
             self.book_tree.insert("", "end", values=vals)
 
-        self.passbook_info_labels["minutes_owed"].config(text=format_currency(fee_totals.get("minutes", 0)))
-        self.passbook_info_labels["ict_owed"].config(text=format_currency(fee_totals.get("ict", 0)))
-        self.passbook_info_labels["agm_owed"].config(text=format_currency(fee_totals.get("agm", 0)))
-        self.passbook_info_labels["lateness_owed"].config(text=format_currency(fee_totals.get("lateness", 0)))
-        self.passbook_info_labels["absentism_owed"].config(text=format_currency(fee_totals.get("absentism", 0)))
-        self.passbook_info_labels["fines_owed"].config(text=format_currency(fee_totals.get("fines", 0)))
+        self.passbook_info_labels["minutes_billed"].config(text=format_currency(summary["minutes_billed"]))
+        self.passbook_info_labels["minutes_paid"].config(text=format_currency(summary["minutes_paid"]))
+        self.passbook_info_labels["minutes_owed"].config(text=format_currency(summary["minutes_owed"]))
+        self.passbook_info_labels["absentism_billed"].config(text=format_currency(summary["absentism_billed"]))
+        self.passbook_info_labels["absentism_paid"].config(text=format_currency(summary["absentism_paid"]))
+        self.passbook_info_labels["absentism_owed"].config(text=format_currency(summary["absentism_owed"]))
+        self.passbook_info_labels["fines_billed"].config(text=format_currency(summary["fines_billed"]))
+        self.passbook_info_labels["fines_paid"].config(text=format_currency(summary["fines_paid"]))
+        self.passbook_info_labels["fines_owed"].config(text=format_currency(summary["fines_owed"]))
 
         if rows:
             totals_vals = ["TOTALS",
@@ -430,7 +433,7 @@ class MemberForm(tk.Frame):
                 format_currency(total_loan_collected) if total_loan_collected else "--",
                 format_currency(last_outstanding) if last_outstanding else "--",
                 format_currency(total_other) if total_other else "--",
-                "", "",
+                "",
             ])
             self.book_tree.insert("", "end", values=totals_vals, tags=("totals",))
             self.book_tree.tag_configure("totals", font=("Segoe UI", 10, "bold"),

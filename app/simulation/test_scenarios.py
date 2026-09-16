@@ -33,7 +33,7 @@ def _foundation(h: SimHarness):
     h.assert_true("Admin user exists", h._admin_id is not None)
 
     from constants import PASSBOOK_FEE_COLUMNS
-    h.assert_true("Fee columns defined", len(PASSBOOK_FEE_COLUMNS) >= 6)
+    h.assert_true("Fee columns defined", len(PASSBOOK_FEE_COLUMNS) >= 5)
 
 
 def _members(h: SimHarness):
@@ -129,13 +129,13 @@ def _passbook_money_in(h: SimHarness):
         h.assert_eq("Passbook ict zeroed", feb_rows3[0].get("ict", 0), 0)
 
     ok4 = save_passbook_input(h._m1["id"], "2026-02-05",
-                              {"lateness": 500, "absentism": 1500},
+                              {"ict": 500, "absentism": 1500},
                               entered_by=h._admin_id, allow_backdate=True)
     h.assert_true("Save passbook custom categories", ok4)
     pb4 = get_member_passbook(h._m1["id"])
     feb5 = [r for r in pb4 if r["date"] == "2026-02-05"]
     if feb5:
-        h.assert_eq("Passbook lateness", feb5[0].get("lateness", 0), 500)
+        h.assert_eq("Passbook ict custom", feb5[0].get("ict", 0), 500)
         h.assert_eq("Passbook absentism", feb5[0].get("absentism", 0), 1500)
 
 
@@ -272,7 +272,7 @@ def _attendance_charges(h: SimHarness):
     h.assert_eq("Absence fines applied", fine_count, 1)
 
     levy_count = apply_minutes_levy(mtg_id, 2000, entered_by=h._admin_id)
-    h.assert_eq("Minutes levy applied", levy_count, 1)
+    h.assert_eq("Minutes levy applied", levy_count, 2)
 
     charges = get_member_charges(h._m1["id"])
     h.assert_true("Member 1 has charges", len(charges) >= 2)

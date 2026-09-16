@@ -55,7 +55,6 @@ CHARGE_ABSENCE_FINE = "Absence Fine"
 CHARGE_MINUTES_LEVY = "Minutes Levy"
 CHARGE_ICT = "ICT"
 CHARGE_AGM = "AGM"
-CHARGE_LATENESS = "Lateness"
 CHARGE_ABSENTISM = "Absentism"
 CHARGE_OTHER = "Other"
 
@@ -68,7 +67,6 @@ PASSBOOK_FEE_COLUMNS = [
     ("minutes", "Minutes", CHARGE_MINUTES_LEVY),
     ("ict", "ICT", CHARGE_ICT),
     ("agm", "AGM", CHARGE_AGM),
-    ("lateness", "Lateness", CHARGE_LATENESS),
     ("absentism", "Absentism", CHARGE_ABSENTISM),
     ("fines", "Fines", CHARGE_ABSENCE_FINE),
 ]
@@ -90,7 +88,6 @@ SETTING_MAX_LOAN_MULTIPLIER = "max_loan_multiplier"
 SETTING_REQUIRED_GUARANTORS = "required_guarantors"
 SETTING_INTEREST_RATE = "interest_rate"
 SETTING_INTEREST_METHOD = "interest_method"
-SETTING_LATE_PAYMENT_PENALTY = "late_payment_penalty"
 SETTING_SCHEMA_VERSION = "schema_version"
 
 # Interest Methods
@@ -106,5 +103,5 @@ DB_NAME = "orisun_ibukun.db"
 BACKUP_DIR_NAME = "backups"
 
 # App Version & Update (hardcoded — not user-editable)
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.2.0"
 GITHUB_REPO = "James212-lab/OrisunIbukun"

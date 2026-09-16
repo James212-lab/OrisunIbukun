@@ -19,7 +19,6 @@ from constants import (
     CHARGE_MINUTES_LEVY,
     CHARGE_ICT,
     CHARGE_AGM,
-    CHARGE_LATENESS,
     CHARGE_ABSENTISM,
     CHARGE_OTHER,
     CHARGE_STATUS_OWED,
@@ -554,8 +553,15 @@ def get_member_financial_summary(member_db_id: int) -> dict:
     )
     loan_paid = cur.fetchone()["total"]
 
-    charges = {"minutes_owed": 0, "fines_owed": 0, "other_owed": 0,
-               "charges_paid": 0}
+    charges = {
+        "minutes_billed": 0, "minutes_paid": 0, "minutes_owed": 0,
+        "ict_billed": 0, "ict_paid": 0, "ict_owed": 0,
+        "agm_billed": 0, "agm_paid": 0, "agm_owed": 0,
+        "absentism_billed": 0, "absentism_paid": 0, "absentism_owed": 0,
+        "fines_billed": 0, "fines_paid": 0, "fines_owed": 0,
+        "other_billed": 0, "other_paid": 0, "other_owed": 0,
+        "charges_paid": 0,
+    }
     try:
         cur = conn.execute(
             """SELECT charge_type,
@@ -565,18 +571,40 @@ def get_member_financial_summary(member_db_id: int) -> dict:
             (member_db_id,),
         )
         for crow in cur.fetchall():
-            owed = (crow["billed"] or 0) - (crow["paid"] or 0)
-            charges["charges_paid"] += crow["paid"] or 0
-            if crow["charge_type"] == CHARGE_MINUTES_LEVY:
+            ctype = crow["charge_type"]
+            billed = crow["billed"] or 0
+            paid = crow["paid"] or 0
+            owed = billed - paid
+            charges["charges_paid"] += paid
+            if ctype == CHARGE_MINUTES_LEVY:
+                charges["minutes_billed"] = billed
+                charges["minutes_paid"] = paid
                 charges["minutes_owed"] = owed
-            elif crow["charge_type"] == CHARGE_ABSENCE_FINE:
+            elif ctype == CHARGE_ICT:
+                charges["ict_billed"] = billed
+                charges["ict_paid"] = paid
+                charges["ict_owed"] = owed
+            elif ctype == CHARGE_AGM:
+                charges["agm_billed"] = billed
+                charges["agm_paid"] = paid
+                charges["agm_owed"] = owed
+            elif ctype == CHARGE_ABSENTISM:
+                charges["absentism_billed"] = billed
+                charges["absentism_paid"] = paid
+                charges["absentism_owed"] = owed
+            elif ctype == CHARGE_ABSENCE_FINE:
+                charges["fines_billed"] = billed
+                charges["fines_paid"] = paid
                 charges["fines_owed"] = owed
             else:
+                charges["other_billed"] += billed
+                charges["other_paid"] += paid
                 charges["other_owed"] += owed
     except Exception:
         pass
-    charges["total_owed"] = (charges["minutes_owed"] + charges["fines_owed"]
-                             + charges["other_owed"])
+    charges["total_owed"] = (charges["minutes_owed"] + charges["ict_owed"]
+                             + charges["agm_owed"] + charges["absentism_owed"]
+                             + charges["fines_owed"] + charges["other_owed"])
 
     return {
         "total_savings": total_savings,
@@ -673,10 +701,11 @@ def apply_absence_fines(meeting_id: int, amount: float,
 
 def apply_minutes_levy(meeting_id: int, amount: float,
                        entered_by: int = None) -> int:
-    """Apply the compulsory minutes levy as carried-over debt to absent members.
+    """Apply the compulsory minutes levy to ALL active members.
 
-    Present members are expected to pay cash at the meeting; absent members
-    carry it as debt. Returns the number of new charges created.
+    Every active member gets a charge for the meeting. Present members are
+    expected to pay cash at the meeting; absent members carry it as debt.
+    Returns the number of new charges created.
     """
     if amount <= 0:
         return 0
@@ -684,14 +713,13 @@ def apply_minutes_levy(meeting_id: int, amount: float,
     count = 0
     with conn:
         rows = conn.execute(
-            "SELECT member_id FROM attendance WHERE meeting_id = ? AND status = 'Absent'",
-            (meeting_id,),
+            """SELECT id FROM members WHERE status = 'Active'""",
         ).fetchall()
         for r in rows:
             cid = _create_charge(
-                conn, r["member_id"], CHARGE_MINUTES_LEVY, amount,
+                conn, r["id"], CHARGE_MINUTES_LEVY, amount,
                 meeting_id=meeting_id,
-                description=f"Minutes levy (carried over) for meeting #{meeting_id}",
+                description=f"Minutes levy for meeting #{meeting_id}",
                 entered_by=entered_by,
             )
             if cid:
@@ -822,7 +850,6 @@ def record_charge_payment(member_db_id: int, amount: float, category: str,
         "Fines": CHARGE_ABSENCE_FINE,
         "ICT": CHARGE_ICT,
         "AGM": CHARGE_AGM,
-        "Lateness": CHARGE_LATENESS,
         "Absentism": CHARGE_ABSENTISM,
         "Other": CHARGE_OTHER,
     }
@@ -1013,7 +1040,6 @@ def get_member_passbook(member_db_id: int) -> list:
         r = {"date": t["date"], "savings": 0,
              "loan_repayment": 0, "loan_collected": 0,
              "loan_outstanding": "", "other": 0,
-             "method": t["payment_method"] or "",
              "description": desc}
         for col_key, _label, _ctype in PASSBOOK_FEE_COLUMNS:
             r[col_key] = 0
@@ -1065,8 +1091,6 @@ def get_member_passbook(member_db_id: int) -> list:
                 m["loan_outstanding"] = row["loan_outstanding"]
             if row["description"] and not m["description"]:
                 m["description"] = row["description"]
-            if row["method"] and not m["method"]:
-                m["method"] = row["method"]
 
     return sorted(merged.values(), key=lambda x: x["date"])
 
@@ -1187,6 +1211,21 @@ def list_loan_documents(loan_db_id: int) -> list:
         "SELECT * FROM loan_documents WHERE loan_id = ? ORDER BY uploaded_at DESC",
         (loan["id"],),
     ).fetchall()
+
+
+def get_loan_repayments(loan_db_id: int) -> list:
+    """Return all repayments for a loan, newest first."""
+    loan, conn = _resolve_loan(loan_db_id)
+    rows = conn.execute(
+        """SELECT lr.*, t.transaction_id as txn_id, t.date as txn_date,
+                  t.payment_method
+           FROM loan_repayments lr
+           LEFT JOIN transactions t ON lr.transaction_id = t.transaction_id
+           WHERE lr.loan_id = ?
+           ORDER BY lr.payment_date DESC, lr.id DESC""",
+        (loan["id"],),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_loan_totals_by_period() -> list:
@@ -1375,7 +1414,7 @@ def get_monthly_summary(year: int, month: int) -> dict:
 def get_monthly_financial_statement(year: int, month: int) -> dict:
     """Compute the monthly financial statement (IN vs OUT model).
 
-    IN: Savings, Minutes, Absentism, Lateness, Others, HQ Funding
+    IN: Savings, Minutes, Absentism, Others, HQ Funding
     OUT: Expenses, Loans Disbursed, HQ Remittance
     NET: IN - OUT
     """
@@ -1400,11 +1439,9 @@ def get_monthly_financial_statement(year: int, month: int) -> dict:
     # Break down charge payments by description prefix
     in_minutes = 0
     in_absentism = 0
-    in_lateness = 0
     in_others = total_charges
     for desc_prefix, field in [
         ("Minutes", "in_minutes"), ("Absentism", "in_absentism"),
-        ("Lateness", "in_lateness"),
     ]:
         cur = conn.execute(
             """SELECT COALESCE(SUM(amount), 0) as total FROM transactions
@@ -1417,8 +1454,6 @@ def get_monthly_financial_statement(year: int, month: int) -> dict:
             in_minutes = val
         elif field == "in_absentism":
             in_absentism = val
-        elif field == "in_lateness":
-            in_lateness = val
         in_others -= val
 
     # Add Entrance Fee and Other to Others
@@ -1436,7 +1471,7 @@ def get_monthly_financial_statement(year: int, month: int) -> dict:
         (month_str,))
     in_hq = cur.fetchone()["total"]
 
-    amount_in = in_savings + in_minutes + in_absentism + in_lateness + in_others + in_hq
+    amount_in = in_savings + in_minutes + in_absentism + in_others + in_hq
 
     # ── OUT ──
     cur = conn.execute(
@@ -1465,7 +1500,6 @@ def get_monthly_financial_statement(year: int, month: int) -> dict:
         "in_savings": in_savings,
         "in_minutes": in_minutes,
         "in_absentism": in_absentism,
-        "in_lateness": in_lateness,
         "in_others": in_others,
         "in_hq": in_hq,
         "amount_in": amount_in,

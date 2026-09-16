@@ -580,11 +580,11 @@ class ReportForm(tk.Frame):
     def _report_monthly_financial(self):
         date_from, date_to = self._get_date_range()
         columns = ("month", "in_savings", "in_minutes", "in_absentism",
-                   "in_lateness", "in_others", "in_hq", "amount_in",
+                   "in_others", "in_hq", "amount_in",
                    "out_expenses", "out_loans", "out_hq", "amount_out", "net")
         headings = {
             "month": "Month", "in_savings": "Savings", "in_minutes": "Minutes",
-            "in_absentism": "Absentism", "in_lateness": "Lateness",
+            "in_absentism": "Absentism",
             "in_others": "Others", "in_hq": "HQ Funding",
             "amount_in": "Amount In", "out_expenses": "Expenses",
             "out_loans": "Loans Disbursed", "out_hq": "HQ Remittance",
@@ -606,7 +606,7 @@ class ReportForm(tk.Frame):
         months = [r["ym"] for r in conn.execute(sql, params).fetchall()]
 
         t_ins = {k: 0 for k in ["in_savings", "in_minutes", "in_absentism",
-                                  "in_lateness", "in_others", "in_hq", "amount_in"]}
+                                  "in_others", "in_hq", "amount_in"]}
         t_outs = {k: 0 for k in ["out_expenses", "out_loans", "out_hq", "amount_out"]}
         t_net = 0
         for ym in months:
@@ -623,7 +623,6 @@ class ReportForm(tk.Frame):
                 ym, format_currency(stmt["in_savings"]),
                 format_currency(stmt["in_minutes"]),
                 format_currency(stmt["in_absentism"]),
-                format_currency(stmt["in_lateness"]),
                 format_currency(stmt["in_others"]),
                 format_currency(stmt["in_hq"]),
                 format_currency(stmt["amount_in"]),
@@ -637,7 +636,6 @@ class ReportForm(tk.Frame):
             "TOTAL", format_currency(t_ins["in_savings"]),
             format_currency(t_ins["in_minutes"]),
             format_currency(t_ins["in_absentism"]),
-            format_currency(t_ins["in_lateness"]),
             format_currency(t_ins["in_others"]),
             format_currency(t_ins["in_hq"]),
             format_currency(t_ins["amount_in"]),

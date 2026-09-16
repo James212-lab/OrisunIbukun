@@ -410,12 +410,15 @@ class SavingsForm(tk.Frame):
             self.info_labels[key] = val
 
         row2 = tk.Frame(info_frame, bg=LIGHT_BLUE)
-        row2.pack(fill="x")
-        for key, label in [("minutes_owed", "Minutes"), ("ict_owed", "ICT"),
-                           ("agm_owed", "AGM"), ("lateness_owed", "Lateness"),
-                           ("absentism_owed", "Absentism"), ("fines_owed", "Fines")]:
+        row2.pack(fill="x", pady=(0, 4))
+        for key, label in [("minutes_billed", "Min Billed"), ("minutes_paid", "Min Paid"),
+                           ("minutes_owed", "Min Outst."),
+                           ("absentism_billed", "Abs Billed"), ("absentism_paid", "Abs Paid"),
+                           ("absentism_owed", "Abs Outst."),
+                           ("fines_billed", "Fine Billed"), ("fines_paid", "Fine Paid"),
+                           ("fines_owed", "Fine Outst.")]:
             f = tk.Frame(row2, bg=LIGHT_BLUE)
-            f.pack(side="left", padx=(0, 14))
+            f.pack(side="left", padx=(0, 10))
             tk.Label(f, text=f"{label}:", font=("Segoe UI", 9, "bold"),
                      fg=BLUE, bg=LIGHT_BLUE).pack(side="left")
             val = tk.Label(f, text="--", font=("Segoe UI", 9),
@@ -432,13 +435,13 @@ class SavingsForm(tk.Frame):
         self._passbook_cols = ["date", "savings", "loan_repayment"]
         for col_key, label, _ctype in PASSBOOK_FEE_COLUMNS:
             self._passbook_cols.append(col_key)
-        self._passbook_cols.extend(["loan_collected", "outstanding", "other", "method", "desc"])
+        self._passbook_cols.extend(["loan_collected", "outstanding", "other", "desc"])
 
         self.book_tree = ttk.Treeview(book_frame, columns=self._passbook_cols,
                                       show="headings", height=10)
         col_widths = {"date": 85, "savings": 90, "loan_repayment": 90,
                       "loan_collected": 90, "outstanding": 95, "other": 80,
-                      "method": 85, "desc": 130}
+                      "desc": 130}
         for col_key, label, _ctype in PASSBOOK_FEE_COLUMNS:
             col_widths[col_key] = 80
 
@@ -455,8 +458,6 @@ class SavingsForm(tk.Frame):
                 txt = "Loan Outst."
             elif col == "other":
                 txt = "Other"
-            elif col == "method":
-                txt = "Method"
             elif col == "desc":
                 txt = "Details"
             else:
@@ -519,17 +520,19 @@ class SavingsForm(tk.Frame):
                 format_currency(r["loan_collected"]) if r["loan_collected"] else "--",
                 format_currency(r["loan_outstanding"]) if r["loan_outstanding"] != "" else "--",
                 format_currency(r["other"]) if r["other"] else "--",
-                r.get("method") or "--",
                 (r["description"] or "")[:30],
             ])
             self.book_tree.insert("", "end", values=vals)
 
-        self.info_labels["minutes_owed"].config(text=format_currency(fee_totals.get("minutes", 0)))
-        self.info_labels["ict_owed"].config(text=format_currency(fee_totals.get("ict", 0)))
-        self.info_labels["agm_owed"].config(text=format_currency(fee_totals.get("agm", 0)))
-        self.info_labels["lateness_owed"].config(text=format_currency(fee_totals.get("lateness", 0)))
-        self.info_labels["absentism_owed"].config(text=format_currency(fee_totals.get("absentism", 0)))
-        self.info_labels["fines_owed"].config(text=format_currency(fee_totals.get("fines", 0)))
+        self.info_labels["minutes_billed"].config(text=format_currency(summary["minutes_billed"]))
+        self.info_labels["minutes_paid"].config(text=format_currency(summary["minutes_paid"]))
+        self.info_labels["minutes_owed"].config(text=format_currency(summary["minutes_owed"]))
+        self.info_labels["absentism_billed"].config(text=format_currency(summary["absentism_billed"]))
+        self.info_labels["absentism_paid"].config(text=format_currency(summary["absentism_paid"]))
+        self.info_labels["absentism_owed"].config(text=format_currency(summary["absentism_owed"]))
+        self.info_labels["fines_billed"].config(text=format_currency(summary["fines_billed"]))
+        self.info_labels["fines_paid"].config(text=format_currency(summary["fines_paid"]))
+        self.info_labels["fines_owed"].config(text=format_currency(summary["fines_owed"]))
 
         if rows:
             totals_vals = ["TOTALS",
@@ -542,7 +545,7 @@ class SavingsForm(tk.Frame):
                 format_currency(total_loan_collected) if total_loan_collected else "--",
                 format_currency(last_outstanding) if last_outstanding else "--",
                 format_currency(total_other) if total_other else "--",
-                "", "",
+                "",
             ])
             self.book_tree.insert("", "end", values=totals_vals, tags=("totals",))
             self.book_tree.tag_configure("totals", font=("Segoe UI", 10, "bold"),
@@ -607,7 +610,7 @@ class SavingsForm(tk.Frame):
         self.edit_cols = ["date", "savings", "loan_repayment"]
         for col_key, label, _ctype in PASSBOOK_FEE_COLUMNS:
             self.edit_cols.append(col_key)
-        self.edit_cols.extend(["loan_collected", "outstanding", "other", "method", "desc"])
+        self.edit_cols.extend(["loan_collected", "outstanding", "other", "desc"])
         self._edit_col_keys = list(self.edit_cols)
 
         self.edit_tree = ttk.Treeview(tree_frame, columns=self.edit_cols,
@@ -645,9 +648,6 @@ class SavingsForm(tk.Frame):
             elif col == "other":
                 self.edit_tree.heading(col, text="Other")
                 self.edit_tree.column(col, width=80, anchor="e")
-            elif col == "method":
-                self.edit_tree.heading(col, text="Method")
-                self.edit_tree.column(col, width=85, anchor="center")
             elif col == "desc":
                 self.edit_tree.heading(col, text="Details")
                 self.edit_tree.column(col, width=130, anchor="w")
@@ -757,7 +757,6 @@ class SavingsForm(tk.Frame):
                 str(int(r["loan_collected"])) if r.get("loan_collected") else "",
                 str(int(r["loan_outstanding"])) if r.get("loan_outstanding") != "" else "",
                 str(int(r["other"])) if r.get("other") else "",
-                r.get("method", ""),
                 r.get("description", "")[:30],
             ])
             self.edit_tree.insert("", "end", values=vals)
@@ -799,7 +798,7 @@ class SavingsForm(tk.Frame):
             self._open_date_picker(row_id, col_index)
             return
 
-        if clicked_col == "method" or clicked_col == "desc":
+        if clicked_col == "desc":
             return
 
         if self._edit_entry:
@@ -911,7 +910,7 @@ class SavingsForm(tk.Frame):
 
             categories = {}
             for col_key in self._edit_col_keys:
-                if col_key in ("date", "method", "desc", "savings", "loan_repayment",
+                if col_key in ("date", "desc", "savings", "loan_repayment",
                                "loan_collected", "outstanding", "other"):
                     continue
                 idx = self.edit_cols.index(col_key)

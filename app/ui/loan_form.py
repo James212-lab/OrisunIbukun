@@ -11,6 +11,7 @@ from engines.transaction_engine import (
     add_loan_document, list_loan_documents,
     get_member_loans, get_all_loan_members,
     get_member_financial_summary, reverse_transaction,
+    get_loan_repayments,
 )
 from utils.validators import validate_amount
 from utils.helpers import format_currency, PaginationHelper
@@ -382,7 +383,126 @@ class LoanForm(tk.Frame):
             return
         loan_db_id = int(sel[0])
         self._selected_loan_db_id = loan_db_id
-        self._load_single_loan_detail(loan_db_id)
+        self._open_loan_popup(loan_db_id)
+
+    def _open_loan_popup(self, loan_db_id):
+        conn = get_connection()
+        loan = conn.execute(
+            """SELECT l.*, m.full_name, m.member_id, m.phone
+               FROM loans l JOIN members m ON l.member_id = m.id
+               WHERE l.id = ?""", (loan_db_id,)).fetchone()
+        if not loan:
+            return
+
+        win = tk.Toplevel(self)
+        win.title(f"Loan {loan['loan_id']} — {loan['full_name']}")
+        win.geometry("720x560")
+        win.configure(bg=WHITE)
+        win.transient(self.winfo_toplevel())
+        win.grab_set()
+
+        notebook = ttk.Notebook(win)
+        notebook.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # ── Details Tab ──
+        tab_detail = tk.Frame(notebook, bg=WHITE)
+        notebook.add(tab_detail, text="  Details  ")
+
+        repaid = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) as total FROM loan_repayments WHERE loan_id = ?",
+            (loan_db_id,)).fetchone()["total"]
+
+        detail_text = tk.Text(tab_detail, font=("Consolas", 11), bg="#FAFAFA",
+                              relief="solid", bd=1, wrap="word")
+        detail_text.pack(fill="both", expand=True, padx=8, pady=8)
+        lines = [
+            f"Loan ID: {loan['loan_id']}       Status: {loan['status']}",
+            f"Principal: {format_currency(loan['principal_amount'])}       "
+            f"Interest: {loan['interest_rate']}% ({format_currency(loan['interest_amount'])})",
+            f"Processing Fee: {format_currency(loan['processing_fee'])}       "
+            f"Other Charges: {format_currency(loan['other_charges'])}",
+            f"Total Repayable: {format_currency(loan['total_repayable'])}",
+            f"Repaid: {format_currency(repaid)}       "
+            f"Outstanding: {format_currency(loan['outstanding_principal'] + loan['outstanding_interest'])}",
+            f"Frequency: {loan['repayment_frequency']}       "
+            f"Applied: {loan['application_date'] or '--'}       "
+            f"Disbursed: {loan['disbursement_date'] or '--'}",
+        ]
+        detail_text.insert(tk.END, "\n".join(lines))
+        detail_text.config(state="disabled")
+
+        # ── Guarantors Tab ──
+        tab_guar = tk.Frame(notebook, bg=WHITE)
+        notebook.add(tab_guar, text="  Guarantors  ")
+
+        guar_cols = ("name", "amount", "status")
+        guar_tree = ttk.Treeview(tab_guar, columns=guar_cols, show="headings", height=12)
+        guar_tree.heading("name", text="Name")
+        guar_tree.heading("amount", text="Guarantee Amount")
+        guar_tree.heading("status", text="Status")
+        guar_tree.column("name", width=280)
+        guar_tree.column("amount", width=180, anchor="e")
+        guar_tree.column("status", width=120, anchor="center")
+        guar_tree.pack(fill="both", expand=True, padx=8, pady=8)
+
+        guar_data = get_loan_guarantors(loan_db_id)
+        for g in guar_data["members"]:
+            guar_tree.insert("", "end",
+                             values=(f"{g['full_name']} (Member)",
+                                     format_currency(g["guarantee_amount"]),
+                                     g["status"]))
+        for g in guar_data["external"]:
+            guar_tree.insert("", "end",
+                             values=(f"{g['full_name']} ({g['relationship']})",
+                                     format_currency(g["guarantee_amount"]),
+                                     g["status"]))
+
+        # ── Documents Tab ──
+        tab_docs = tk.Frame(notebook, bg=WHITE)
+        notebook.add(tab_docs, text="  Documents  ")
+
+        doc_cols = ("name", "uploaded")
+        doc_tree = ttk.Treeview(tab_docs, columns=doc_cols, show="headings", height=12)
+        doc_tree.heading("name", text="Document Name")
+        doc_tree.heading("uploaded", text="Uploaded")
+        doc_tree.column("name", width=400)
+        doc_tree.column("uploaded", width=180, anchor="center")
+        doc_tree.pack(fill="both", expand=True, padx=8, pady=8)
+
+        docs = list_loan_documents(loan_db_id)
+        for d in docs:
+            doc_tree.insert("", "end", values=(d["doc_name"], d["uploaded_at"]))
+
+        # ── Repayments Tab ──
+        tab_repay = tk.Frame(notebook, bg=WHITE)
+        notebook.add(tab_repay, text="  Repayments  ")
+
+        repay_cols = ("date", "amount", "principal", "interest", "balance", "method")
+        repay_tree = ttk.Treeview(tab_repay, columns=repay_cols, show="headings", height=12)
+        repay_tree.heading("date", text="Date")
+        repay_tree.heading("amount", text="Amount Paid")
+        repay_tree.heading("principal", text="Principal Portion")
+        repay_tree.heading("interest", text="Interest Portion")
+        repay_tree.heading("balance", text="Balance After")
+        repay_tree.heading("method", text="Method")
+        repay_tree.column("date", width=100, anchor="center")
+        repay_tree.column("amount", width=110, anchor="e")
+        repay_tree.column("principal", width=120, anchor="e")
+        repay_tree.column("interest", width=110, anchor="e")
+        repay_tree.column("balance", width=110, anchor="e")
+        repay_tree.column("method", width=90, anchor="center")
+        repay_tree.pack(fill="both", expand=True, padx=8, pady=8)
+
+        repayments = get_loan_repayments(loan_db_id)
+        for rp in repayments:
+            repay_tree.insert("", "end", values=(
+                rp.get("payment_date") or rp.get("txn_date") or "--",
+                format_currency(rp.get("amount", 0)),
+                format_currency(rp.get("principal_portion", 0)),
+                format_currency(rp.get("interest_portion", 0)),
+                format_currency(rp.get("balance_after", 0)),
+                rp.get("payment_method") or "Cash",
+            ))
 
     def _load_member_loan_detail(self, db_id):
         conn = get_connection()
