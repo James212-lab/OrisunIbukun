@@ -192,7 +192,7 @@ class ReportForm(tk.Frame):
         tree_scroll_x.pack(side="bottom", fill="x")
 
         style = ttk.Style()
-        style.configure("Treeview", font=("Segoe UI", 9), rowheight=26)
+        style.configure("Treeview", font=("Segoe UI Symbol", 9), rowheight=26)
         style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
 
     def _on_report_select(self, event):

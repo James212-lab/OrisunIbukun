@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox, filedialog
 import datetime
 import os
 import shutil
+import subprocess
 from database.connection import get_connection
 from database.schema import get_setting
 from engines.transaction_engine import (
@@ -159,7 +160,7 @@ class LoanForm(tk.Frame):
         tree_scroll.pack(side="right", fill="y")
 
         style = ttk.Style()
-        style.configure("Treeview", font=("Segoe UI", 10), rowheight=30)
+        style.configure("Treeview", font=("Segoe UI Symbol", 10), rowheight=30)
         style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
 
         self.reg_tree.bind("<Double-1>", lambda e: self._on_register_select())
@@ -498,6 +499,143 @@ class LoanForm(tk.Frame):
                   bg=LIGHT_BLUE, fg=BLUE, relief="flat",
                   command=_view_guarantor_photo).pack(side="left")
 
+        def _get_selected_guarantor():
+            sel = guar_tree.selection()
+            if not sel:
+                return None, None
+            vals = guar_tree.item(sel[0], "values")
+            name = vals[0]
+            for g in guar_data["members"]:
+                if g["full_name"] in name:
+                    return g, "member"
+            for g in guar_data["external"]:
+                if g["full_name"] in name:
+                    return g, "external"
+            return None, None
+
+        def _view_guarantor_profile():
+            g, gtype = _get_selected_guarantor()
+            if not g:
+                messagebox.showinfo("No Selection", "Select a guarantor first.", parent=win)
+                return
+            pw = tk.Toplevel(win)
+            pw.title(f"KYC - {g['full_name']}")
+            pw.configure(bg=WHITE)
+            pw.geometry("620x520")
+            pw.resizable(False, False)
+
+            top = tk.Frame(pw, bg=WHITE)
+            top.pack(fill="x", padx=15, pady=10)
+
+            photo_path = g.get("photo_path") or ""
+            if photo_path and os.path.exists(photo_path):
+                try:
+                    from PIL import Image, ImageTk
+                    img = Image.open(photo_path).convert("RGB")
+                    img.thumbnail((130, 140))
+                    photo = ImageTk.PhotoImage(img)
+                    img_lbl = tk.Label(top, image=photo, bg=WHITE)
+                    img_lbl.image = photo
+                    img_lbl.pack(side="left", padx=(0, 15))
+                except Exception:
+                    pass
+
+            info = tk.Frame(top, bg=WHITE)
+            info.pack(side="left", fill="both", expand=True)
+
+            def _add_row(parent, label, value, r):
+                tk.Label(parent, text=label, font=("Segoe UI", 10, "bold"),
+                         bg=WHITE, anchor="w").grid(row=r, column=0, sticky="w", padx=(0, 10), pady=2)
+                tk.Label(parent, text=str(value or "--"), font=("Segoe UI", 10),
+                         bg=WHITE, anchor="w").grid(row=r, column=1, sticky="w", pady=2)
+
+            _add_row(info, "Full Name", g.get("full_name"), 0)
+            if gtype == "member":
+                _add_row(info, "Member ID", g.get("member_id"), 1)
+            _add_row(info, "Phone", g.get("phone"), 2)
+            _add_row(info, "Address", g.get("address"), 3)
+            _add_row(info, "ID Type", g.get("id_type"), 4)
+            _add_row(info, "ID Number", g.get("id_number"), 5)
+            if gtype == "external":
+                _add_row(info, "Relationship", g.get("relationship"), 6)
+            else:
+                _add_row(info, "Gender", g.get("gender"), 6)
+            _add_row(info, "Occupation", g.get("occupation"), 7)
+            _add_row(info, "DOB", g.get("dob"), 8)
+            _add_row(info, "Guarantee Amount", format_currency(g.get("guarantee_amount", 0)), 9)
+            _add_row(info, "Status", g.get("status"), 10)
+            if gtype == "member":
+                _add_row(info, "Type", "Member", 11)
+            else:
+                _add_row(info, "Type", "Non-Member", 11)
+
+            sep = tk.Frame(pw, bg="#CCCCCC", height=1)
+            sep.pack(fill="x", padx=15, pady=5)
+
+            btn_frame = tk.Frame(pw, bg=WHITE)
+            btn_frame.pack(fill="x", padx=15, pady=(0, 10))
+
+            def _print_guarantor_card():
+                import html as _html
+                import webbrowser
+                from database.connection import DB_DIR
+
+                def val(key):
+                    return str(g.get(key) or "--")
+
+                photo_src = ""
+                if photo_path and os.path.exists(photo_path):
+                    photo_src = "file:///" + photo_path.replace("\\", "/")
+
+                kyc_rows = [
+                    ("Full Name", val("full_name")),
+                    ("Phone", val("phone")),
+                    ("Address", val("address")),
+                    ("ID Type", val("id_type")),
+                    ("ID Number", val("id_number")),
+                    ("Relationship" if gtype == "external" else "Gender",
+                     val("relationship") if gtype == "external" else val("gender")),
+                    ("Occupation", val("occupation")),
+                    ("Date of Birth", val("dob")),
+                    ("Guarantee Amount", format_currency(g.get("guarantee_amount", 0))),
+                    ("Status", val("status")),
+                    ("Type", "Non-Member" if gtype == "external" else "Member"),
+                ]
+                kyc_html = "".join(
+                    f"<tr><td><b>{_html.escape(k)}</b></td><td>{_html.escape(str(v))}</td></tr>"
+                    for k, v in kyc_rows)
+
+                page = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Guarantor Card - {_html.escape(val('full_name'))}</title>
+<style>body{{font-family:Segoe UI,Arial;margin:30px;color:#222}}
+h1{{color:#1565C0}}
+.card{{display:flex;gap:25px;align-items:flex-start}}
+.card img{{width:140px;border:2px solid #1565C0}}
+table{{border-collapse:collapse;width:100%;margin:10px 0}}
+td{{border:1px solid #bbb;padding:6px 10px;text-align:left}}
+@media print{{.noprint{{display:none}}}}</style></head><body>
+<h1>ORISUN IBUKUN - Guarantor Card</h1>
+<div class="card"><div>{"<img src='" + photo_src + "'>" if photo_src else "<div>No photo</div>"}</div>
+<div><table>{kyc_html}</table></div></div>
+<p class="noprint"><button onclick="window.print()">Print</button></p>
+</body></html>"""
+                out = DB_DIR / f"guarantor_card_{val('full_name').replace(' ', '_')}.html"
+                out.write_text(page, encoding="utf-8")
+                webbrowser.open("file:///" + str(out).replace("\\", "/"))
+                messagebox.showinfo("Guarantor Card",
+                                    "Guarantor card opened in your browser.\nUse Ctrl+P to print it.")
+
+            tk.Button(btn_frame, text="Print Card", font=("Segoe UI", 9),
+                      bg=LIGHT_BLUE, fg=BLUE, relief="flat",
+                      command=_print_guarantor_card).pack(side="left")
+            tk.Button(btn_frame, text="Close", font=("Segoe UI", 9),
+                      bg=GREY, fg="#333", relief="flat",
+                      command=pw.destroy).pack(side="right")
+
+        tk.Button(photo_btn_frame, text="View Profile", font=("Segoe UI", 9),
+                  bg=LIGHT_BLUE, fg=BLUE, relief="flat",
+                  command=_view_guarantor_profile).pack(side="left", padx=(8, 0))
+
         # ── Documents Tab ──
         tab_docs = tk.Frame(notebook, bg=WHITE)
         notebook.add(tab_docs, text="  Documents  ")
@@ -513,6 +651,32 @@ class LoanForm(tk.Frame):
         docs = list_loan_documents(loan_db_id)
         for d in docs:
             doc_tree.insert("", "end", values=(d["doc_name"], d["uploaded_at"]))
+
+        def _view_document():
+            sel = doc_tree.selection()
+            if not sel:
+                messagebox.showinfo("No Selection", "Select a document to view.", parent=win)
+                return
+            doc_name_display = doc_tree.item(sel[0], "values")[0]
+            for d in docs:
+                if d["doc_name"] == doc_name_display:
+                    fp = d["file_path"]
+                    if os.path.exists(fp):
+                        subprocess.Popen([fp], shell=True)
+                    else:
+                        messagebox.showerror("Missing", f"File not found:\n{fp}", parent=win)
+                    return
+
+        def _on_doc_double_click(event):
+            _view_document()
+
+        doc_tree.bind("<Double-1>", _on_doc_double_click)
+
+        doc_btn_frame = tk.Frame(tab_docs, bg=WHITE)
+        doc_btn_frame.pack(fill="x", padx=8, pady=(0, 8))
+        tk.Button(doc_btn_frame, text="View Document", font=("Segoe UI", 9),
+                  bg=LIGHT_BLUE, fg=BLUE, relief="flat",
+                  command=_view_document).pack(side="left")
 
         # ── Repayments Tab ──
         tab_repay = tk.Frame(notebook, bg=WHITE)

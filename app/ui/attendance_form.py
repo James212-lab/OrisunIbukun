@@ -113,7 +113,7 @@ class AttendanceForm(tk.Frame):
         tree_scroll_x.pack(fill="x")
 
         style = ttk.Style()
-        style.configure("Treeview", font=("Segoe UI", 10), rowheight=28)
+        style.configure("Treeview", font=("Segoe UI Symbol", 10), rowheight=28)
         style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
 
         self.tree.bind("<Button-1>", self._on_cell_click)

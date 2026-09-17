@@ -111,7 +111,7 @@ class MemberForm(tk.Frame):
         tree_scroll.pack(side="right", fill="y")
 
         style = ttk.Style()
-        style.configure("Treeview", font=("Segoe UI", 10), rowheight=32)
+        style.configure("Treeview", font=("Segoe UI Symbol", 10), rowheight=32)
         style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
 
         self.tree.tag_configure("Active", foreground="#2E7D32")

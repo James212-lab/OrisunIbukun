@@ -355,7 +355,8 @@ def add_external_guarantor(loan_db_id: int, full_name: str,
 def get_loan_guarantors(loan_db_id: int) -> dict:
     conn = get_connection()
     members = conn.execute(
-        """SELECT lg.*, m.full_name, m.member_id, m.phone, m.photo_path
+        """SELECT lg.*, m.full_name, m.member_id, m.phone, m.photo_path,
+                  m.address, m.dob, m.gender, m.occupation, m.id_type, m.id_number
            FROM loan_guarantors lg
            JOIN members m ON lg.guarantor_member_id = m.id
            WHERE lg.loan_id = ?""",

@@ -140,7 +140,7 @@ class SavingsForm(tk.Frame):
         tree_scroll.pack(side="right", fill="y")
 
         style = ttk.Style()
-        style.configure("Treeview", font=("Segoe UI", 10), rowheight=30)
+        style.configure("Treeview", font=("Segoe UI Symbol", 10), rowheight=30)
         style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
 
         self.tree.bind("<Double-1>", lambda e: self._on_tree_select())

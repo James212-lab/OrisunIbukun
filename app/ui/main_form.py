@@ -49,7 +49,7 @@ class MainForm(SessionMixin, tk.Tk):
                          font=("Segoe UI", 11))
         style.configure("Nav.TButton", font=("Segoe UI", 13, "bold"), padding=15)
         style.configure("Accent.TButton", font=("Segoe UI", 12, "bold"), padding=10)
-        style.configure("Treeview", font=("Segoe UI", 10), rowheight=28)
+        style.configure("Treeview", font=("Segoe UI Symbol", 10), rowheight=28)
         style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
 
     def _build_ui(self):
