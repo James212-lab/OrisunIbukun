@@ -23,6 +23,7 @@ from constants import (
     REPAY_MONTHLY, REPAY_WEEKLY,
 )
 from permissions import has_permission, PERM_REVERSE_TXN, PERM_LOANS_MANAGE
+from ui.reverse_dialog import open_reverse_dialog
 
 
 BLUE = "#1565C0"
@@ -943,96 +944,13 @@ class LoanForm(tk.Frame):
         if not loan:
             return
         member_id = loan["member_id"]
-        win = tk.Toplevel(self.register_detail_frame)
-        win.title("Reverse Loan Transaction")
-        win.geometry("700x550")
-        win.minsize(700, 500)
-        win.configure(bg=WHITE)
-        win.transient(self.register_detail_frame)
-        win.grab_set()
-
-        tk.Label(win, text="Select a Posted transaction to reverse:",
-                 font=("Segoe UI", 11, "bold"), fg=BLUE, bg=WHITE
-                 ).pack(padx=15, pady=(12, 5), anchor="w")
-
-        # Action bar packed BOTTOM first so it never gets clipped
-        reason_var = tk.StringVar()
-        action_frame = tk.Frame(win, bg=WHITE)
-        action_frame.pack(side="bottom", fill="x", padx=15, pady=(6, 10))
-
-        reason_frame = tk.Frame(action_frame, bg=WHITE)
-        reason_frame.pack(fill="x")
-        tk.Label(reason_frame, text="Reason:", font=("Segoe UI", 10),
-                 bg=WHITE).pack(side="left")
-        tk.Entry(reason_frame, textvariable=reason_var, font=("Segoe UI", 10),
-                 width=40, relief="solid", bd=1).pack(side="left", padx=(6, 0))
-
-        def do_reverse():
-            sel = tree.selection()
-            if not sel:
-                messagebox.showwarning("Select", "Pick a transaction first.")
-                return
-            txn_id = sel[0]
-            reason = reason_var.get().strip()
-            if not reason:
-                messagebox.showwarning("Reason", "Enter a reason for reversal.")
-                return
-            try:
-                reverse_transaction(txn_id, reason,
-                                    self.current_user.get("id"))
-                messagebox.showinfo("Reversed", "Transaction reversed successfully.")
-                win.destroy()
-                self._load_single_loan_detail(self._selected_loan_db_id)
-            except Exception as ex:
-                messagebox.showerror("Error", str(ex))
-
-        tk.Button(action_frame, text="Reverse Selected", font=("Segoe UI", 11, "bold"),
-                  bg="#D32F2F", fg=WHITE, relief="flat", padx=12, pady=4,
-                  command=do_reverse).pack(pady=(6, 0))
-
-        # Tree fills remaining space above the action bar
-        cols = ("txn_id", "date", "type", "amount", "description")
-        tree = ttk.Treeview(win, columns=cols, show="headings", height=12)
-        tree.heading("txn_id", text="Txn ID")
-        tree.heading("date", text="Date")
-        tree.heading("type", text="Type")
-        tree.heading("amount", text="Amount")
-        tree.heading("description", text="Description")
-        tree.column("txn_id", width=90)
-        tree.column("date", width=80)
-        tree.column("type", width=110)
-        tree.column("amount", width=90, anchor="e")
-        tree.column("description", width=200)
-        vsb = ttk.Scrollbar(win, orient="vertical", command=tree.yview)
-        tree.configure(yscrollcommand=vsb.set)
-        tree.pack(side="left", padx=15, fill="both", expand=True)
-        vsb.pack(side="right", fill="y", padx=(0, 15))
-
-        txns = conn.execute(
-            """SELECT transaction_id, date, transaction_type, amount, description
-               FROM transactions
-               WHERE member_id = ? AND status = 'Posted'
-               ORDER BY date DESC, id DESC LIMIT 50""",
-            (member_id,),
-        ).fetchall()
-        for t in txns:
-            tree.insert("", "end", iid=t["transaction_id"],
-                        values=(t["transaction_id"], t["date"],
-                                t["transaction_type"],
-                                format_currency(t["amount"] or 0),
-                                (t["description"] or "")[:50]))
-
-        # Center over parent and ensure visibility
-        win.update_idletasks()
-        pw = self.register_detail_frame.winfo_width()
-        ph = self.register_detail_frame.winfo_height()
-        px = self.register_detail_frame.winfo_rootx()
-        py = self.register_detail_frame.winfo_rooty()
-        wx = px + max(0, (pw - 700) // 2)
-        wy = py + max(0, (ph - 550) // 2)
-        win.geometry(f"700x550+{wx}+{wy}")
-        win.lift()
-        win.focus_force()
+        open_reverse_dialog(
+            parent=self.register_detail_frame,
+            member_id=member_id,
+            current_user=self.current_user,
+            on_success=lambda: self._load_single_loan_detail(
+                self._selected_loan_db_id),
+        )
 
     # ── NEW LOAN TAB ──────────────────────────────────────────────
 
