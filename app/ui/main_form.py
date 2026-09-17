@@ -192,6 +192,7 @@ class MainForm(SessionMixin, tk.Tk):
             ("Savings", stmt["in_savings"]),
             ("Minutes", stmt["in_minutes"]),
             ("Absentism", stmt["in_absentism"]),
+            ("Loan Repayments", stmt.get("in_loan_repayments", 0)),
             ("Others", stmt["in_others"]),
             ("HQ Funding", stmt["in_hq"]),
         ]

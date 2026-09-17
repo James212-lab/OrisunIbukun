@@ -355,7 +355,7 @@ def add_external_guarantor(loan_db_id: int, full_name: str,
 def get_loan_guarantors(loan_db_id: int) -> dict:
     conn = get_connection()
     members = conn.execute(
-        """SELECT lg.*, m.full_name, m.member_id, m.phone
+        """SELECT lg.*, m.full_name, m.member_id, m.phone, m.photo_path
            FROM loan_guarantors lg
            JOIN members m ON lg.guarantor_member_id = m.id
            WHERE lg.loan_id = ?""",
@@ -712,18 +712,31 @@ def apply_minutes_levy(meeting_id: int, amount: float,
     conn = get_connection()
     count = 0
     with conn:
-        rows = conn.execute(
-            """SELECT id FROM members WHERE status = 'Active'""",
-        ).fetchall()
-        for r in rows:
-            cid = _create_charge(
-                conn, r["id"], CHARGE_MINUTES_LEVY, amount,
-                meeting_id=meeting_id,
-                description=f"Minutes levy for meeting #{meeting_id}",
-                entered_by=entered_by,
+        active_ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM members WHERE status = 'Active'"
+        ).fetchall()]
+        if not active_ids:
+            return 0
+        existing = set()
+        for r in conn.execute(
+            "SELECT member_id FROM member_charges WHERE meeting_id = ? AND charge_type = ?",
+            (meeting_id, CHARGE_MINUTES_LEVY)
+        ).fetchall():
+            existing.add(r["member_id"])
+        desc = f"Minutes levy for meeting #{meeting_id}"
+        for mid in active_ids:
+            if mid in existing:
+                continue
+            charge_id = generate_id("CH")
+            conn.execute(
+                """INSERT INTO member_charges
+                   (charge_id, member_id, meeting_id, charge_type, description,
+                    amount, amount_paid, status, created_by)
+                   VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)""",
+                (charge_id, mid, meeting_id, CHARGE_MINUTES_LEVY, desc,
+                 amount, CHARGE_STATUS_OWED, entered_by),
             )
-            if cid:
-                count += 1
+            count += 1
     return count
 
 
@@ -1467,7 +1480,7 @@ def get_monthly_summary(year: int, month: int) -> dict:
 def get_monthly_financial_statement(year: int, month: int) -> dict:
     """Compute the monthly financial statement (IN vs OUT model).
 
-    IN: Savings, Minutes, Absentism, Others, HQ Funding
+    IN: Savings, Minutes, Absentism, Others, HQ Funding, Loan Repayments
     OUT: Expenses, Loans Disbursed, HQ Remittance
     NET: IN - OUT
     """
@@ -1524,7 +1537,15 @@ def get_monthly_financial_statement(year: int, month: int) -> dict:
         (month_str,))
     in_hq = cur.fetchone()["total"]
 
-    amount_in = in_savings + in_minutes + in_absentism + in_others + in_hq
+    # Loan Repayments
+    cur = conn.execute(
+        """SELECT COALESCE(SUM(amount), 0) as total FROM transactions
+           WHERE transaction_type = 'Loan Repayment'
+           AND strftime('%Y-%m', date) = ? AND status = 'Posted'""",
+        (month_str,))
+    in_loan_repayments = cur.fetchone()["total"]
+
+    amount_in = in_savings + in_minutes + in_absentism + in_others + in_hq + in_loan_repayments
 
     # ── OUT ──
     cur = conn.execute(
@@ -1556,6 +1577,7 @@ def get_monthly_financial_statement(year: int, month: int) -> dict:
         "in_others": in_others,
         "in_hq": in_hq,
         "amount_in": amount_in,
+        "in_loan_repayments": in_loan_repayments,
         "out_expenses": out_expenses,
         "out_loans": out_loans,
         "out_hq": out_hq,

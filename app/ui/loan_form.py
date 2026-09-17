@@ -294,12 +294,10 @@ class LoanForm(tk.Frame):
         tk.Label(c, text="Loans", font=("Segoe UI", 13, "bold"),
                  fg=BLUE, bg=WHITE).pack(anchor="w", pady=(8, 4))
 
-        loan_cols = ("loan_id", "principal", "interest", "repayable",
-                     "repaid", "outstanding", "status", "applied")
+        loan_cols = ("loan_id", "principal", "repaid", "outstanding", "status", "applied")
         self.loan_tree = ttk.Treeview(c, columns=loan_cols, show="headings", height=5)
-        for col, txt, w in [("loan_id", "Loan ID", 120), ("principal", "Principal", 110),
-                            ("interest", "Interest", 90), ("repayable", "Repayable", 110),
-                            ("repaid", "Repaid", 100), ("outstanding", "Outstanding", 110),
+        for col, txt, w in [("loan_id", "Loan ID", 120), ("principal", "Principal", 120),
+                            ("repaid", "Repaid", 120), ("outstanding", "Outstanding", 120),
                             ("status", "Status", 90), ("applied", "Applied", 90)]:
             self.loan_tree.heading(col, text=txt)
             self.loan_tree.column(col, width=w,
@@ -457,6 +455,48 @@ class LoanForm(tk.Frame):
                                      format_currency(g["guarantee_amount"]),
                                      g["status"]))
 
+        # View Photo button
+        photo_btn_frame = tk.Frame(tab_guar, bg=WHITE)
+        photo_btn_frame.pack(fill="x", padx=8, pady=(4, 0))
+
+        def _view_guarantor_photo():
+            sel = guar_tree.selection()
+            if not sel:
+                messagebox.showinfo("No Selection", "Select a guarantor first.", parent=win)
+                return
+            vals = guar_tree.item(sel[0], "values")
+            name = vals[0]
+            photo_path = None
+            for g in guar_data["members"]:
+                if g["full_name"] in name and g.get("photo_path"):
+                    photo_path = g["photo_path"]
+                    break
+            if not photo_path:
+                for g in guar_data["external"]:
+                    if g["full_name"] in name and g.get("photo_path"):
+                        photo_path = g["photo_path"]
+                        break
+            if not photo_path or not os.path.exists(photo_path):
+                messagebox.showinfo("No Photo", f"No photo available for {name}.", parent=win)
+                return
+            try:
+                from PIL import Image, ImageTk
+                pwin = tk.Toplevel(win)
+                pwin.title(f"Photo - {name}")
+                pwin.configure(bg=WHITE)
+                img = Image.open(photo_path).convert("RGB")
+                img.thumbnail((400, 440))
+                photo = ImageTk.PhotoImage(img)
+                lbl = tk.Label(pwin, image=photo, bg=WHITE)
+                lbl.image = photo
+                lbl.pack(padx=10, pady=10)
+            except Exception as ex:
+                messagebox.showerror("Error", str(ex), parent=win)
+
+        tk.Button(photo_btn_frame, text="View Photo", font=("Segoe UI", 9),
+                  bg=LIGHT_BLUE, fg=BLUE, relief="flat",
+                  command=_view_guarantor_photo).pack(side="left")
+
         # ── Documents Tab ──
         tab_docs = tk.Frame(notebook, bg=WHITE)
         notebook.add(tab_docs, text="  Documents  ")
@@ -526,8 +566,6 @@ class LoanForm(tk.Frame):
             self.loan_tree.insert("", "end", iid=str(loan["id"]),
                                   values=(loan["loan_id"],
                                           format_currency(loan["principal_amount"]),
-                                          format_currency(loan["interest_amount"]),
-                                          format_currency(loan["total_repayable"]),
                                           format_currency(repaid),
                                           format_currency(outstanding),
                                           loan["status"],
@@ -643,8 +681,6 @@ class LoanForm(tk.Frame):
             self.loan_tree.insert("", "end", iid=str(loan["id"]),
                                   values=(loan["loan_id"],
                                           format_currency(loan["principal_amount"]),
-                                          format_currency(loan["interest_amount"]),
-                                          format_currency(loan["total_repayable"]),
                                           format_currency(repaid),
                                           format_currency(outstanding),
                                           loan["status"],

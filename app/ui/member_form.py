@@ -166,7 +166,7 @@ class MemberForm(tk.Frame):
 
         top_row = tk.Frame(c, bg="#FFFFFF")
         top_row.pack(fill="x", pady=(0, 10))
-        self.profile_photo_label = tk.Label(top_row, bg="#E3F2FD", width=28, height=16,
+        self.profile_photo_label = tk.Label(top_row, bg="#E3F2FD", width=120, height=80,
                                             text="No photo", font=("Segoe UI", 10),
                                             fg="#666666", relief="solid", bd=1)
         self.profile_photo_label.pack(side="left", padx=(0, 15))
@@ -1001,7 +1001,7 @@ class MemberForm(tk.Frame):
             if photo_path and os.path.exists(photo_path):
                 from PIL import Image, ImageTk
                 img = Image.open(photo_path).convert("RGB")
-                img.thumbnail((200, 220))
+                img.thumbnail((400, 440))
                 self._photo_img = ImageTk.PhotoImage(img)
                 self.profile_photo_label.config(image=self._photo_img, text="")
                 return

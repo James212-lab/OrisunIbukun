@@ -103,5 +103,5 @@ DB_NAME = "orisun_ibukun.db"
 BACKUP_DIR_NAME = "backups"
 
 # App Version & Update (hardcoded — not user-editable)
-APP_VERSION = "1.2.2"
+APP_VERSION = "1.2.3"
 GITHUB_REPO = "James212-lab/OrisunIbukun"
