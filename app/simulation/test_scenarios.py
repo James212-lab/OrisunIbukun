@@ -450,7 +450,7 @@ def _update_engine(h: SimHarness):
     )
     from constants import APP_VERSION, GITHUB_REPO
 
-    h.assert_eq("APP_VERSION constant", APP_VERSION, "1.2.5")
+    h.assert_eq("APP_VERSION constant", APP_VERSION, "1.2.6")
     h.assert_eq("GITHUB_REPO constant", GITHUB_REPO, "James212-lab/OrisunIbukun")
 
     # Version parsing

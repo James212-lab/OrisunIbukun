@@ -779,6 +779,61 @@ def reverse_absence_charges(member_db_id: int, meeting_id: int,
     return count
 
 
+def cancel_charge(charge_id: str, reason: str, cancelled_by: int) -> bool:
+    """Cancel an outstanding or partially-paid charge.
+
+    - Owed: deletes the charge record.
+    - Partial: reverses all associated payment transactions, then deletes.
+    - Paid: raises ValueError (reverse payments first via normal flow).
+
+    Returns True on success.
+    """
+    conn = get_connection()
+    charge = conn.execute(
+        "SELECT * FROM member_charges WHERE charge_id = ?", (charge_id,)
+    ).fetchone()
+    if not charge:
+        raise ValueError(f"Charge {charge_id} not found.")
+    if charge["status"] == CHARGE_STATUS_PAID:
+        raise ValueError(
+            "This charge is fully paid. Reverse the payment transactions first.")
+
+    # Find all payment transactions applied to this charge
+    apps = conn.execute(
+        "SELECT txn_id FROM charge_payment_applications WHERE charge_id = ?",
+        (charge_id,),
+    ).fetchall()
+
+    # Reverse each payment transaction (outside the delete transaction)
+    for app in apps:
+        txn_id = app["txn_id"]
+        if not txn_id or txn_id == "__pending__":
+            continue
+        txn = conn.execute(
+            "SELECT status FROM transactions WHERE transaction_id = ?",
+            (txn_id,),
+        ).fetchone()
+        if txn and txn["status"] == TXN_STATUS_POSTED:
+            # Use reverse_transaction (creates its own connection)
+            reverse_transaction(txn_id, reason, cancelled_by)
+
+    # Delete the charge record
+    conn.execute("DELETE FROM member_charges WHERE id = ?", (charge["id"],))
+    conn.execute(
+        "DELETE FROM charge_payment_applications WHERE charge_id = ?",
+        (charge_id,),
+    )
+    # Clean up absentism_fines if applicable
+    if charge["charge_type"] == CHARGE_ABSENTISM and charge.get("meeting_id"):
+        conn.execute(
+            """DELETE FROM absentism_fines
+               WHERE member_id = ? AND meeting_id = ? AND amount_paid < 0.01""",
+            (charge["member_id"], charge["meeting_id"]),
+        )
+    conn.commit()
+    return True
+
+
 def _log_attendance(conn, member_db_id: int, meeting_id: int,
                     old_status: str, new_status: str, user_id: int = None):
     """Log an attendance change to the audit log."""
