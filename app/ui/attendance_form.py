@@ -593,14 +593,14 @@ class AttendanceForm(tk.Frame):
             return
         confirm = messagebox.askyesno(
             "Confirm Minutes Levy",
-            f"Apply minutes levy of {amount:,.0f} to ALL absent members of meeting #{self.current_meeting_id}?",
+            f"Apply minutes levy of {amount:,.0f} to ALL active members of meeting #{self.current_meeting_id}?",
             parent=self)
         if not confirm:
             return
         n = apply_minutes_levy(self.current_meeting_id, amount,
                                entered_by=self.current_user.get("id"))
         if n:
-            messagebox.showinfo("Levy Applied", f"Minutes levy charged to {n} absent member(s).")
+            messagebox.showinfo("Levy Applied", f"Minutes levy charged to {n} active member(s).")
         else:
             messagebox.showinfo("Levy Applied", "No new charges (levy may already have been applied).")
 

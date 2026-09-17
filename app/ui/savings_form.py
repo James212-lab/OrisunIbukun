@@ -271,7 +271,7 @@ class SavingsForm(tk.Frame):
                         ON s.member_id = m.id
                       LEFT JOIN (SELECT member_id,
                                  SUM(CASE WHEN status IN ('Disbursed','Active','Overdue')
-                                     THEN outstanding_principal ELSE 0 END) as active_loan,
+                                     THEN principal_amount ELSE 0 END) as active_loan,
                                  SUM(CASE WHEN status IN ('Disbursed','Active','Overdue')
                                      THEN outstanding_principal + outstanding_interest ELSE 0 END) as outstanding
                                  FROM loans GROUP BY member_id) l
@@ -908,6 +908,7 @@ class SavingsForm(tk.Frame):
             if not date_str or date_str == "--":
                 continue
 
+            # Save charge-type categories (Minutes, ICT, AGM, etc.)
             categories = {}
             for col_key in self._edit_col_keys:
                 if col_key in ("date", "desc", "savings", "loan_repayment",
@@ -925,6 +926,26 @@ class SavingsForm(tk.Frame):
             if ok:
                 changed = True
 
+            # Handle Savings column
+            savings_idx = self.edit_cols.index("savings") if "savings" in self.edit_cols else -1
+            if savings_idx >= 0 and savings_idx < len(vals):
+                raw_sav = vals[savings_idx]
+                try:
+                    sav_amt = float(str(raw_sav).replace(",", "").replace("₦", ""))
+                except (ValueError, TypeError):
+                    sav_amt = 0
+                self._sync_passbook_txn(date_str, sav_amt, "Savings")
+
+            # Handle Other column
+            other_idx = self.edit_cols.index("other") if "other" in self.edit_cols else -1
+            if other_idx >= 0 and other_idx < len(vals):
+                raw_oth = vals[other_idx]
+                try:
+                    oth_amt = float(str(raw_oth).replace(",", "").replace("₦", ""))
+                except (ValueError, TypeError):
+                    oth_amt = 0
+                self._sync_passbook_txn(date_str, oth_amt, "Other")
+
         if changed:
             messagebox.showinfo("Saved",
                                 f"Passbook updated for {member_name}.\n"
@@ -934,6 +955,58 @@ class SavingsForm(tk.Frame):
 
         # Stay in edit view — refresh the grid so admin can continue working
         self._populate_edit_grid()
+
+    def _sync_passbook_txn(self, date_str, new_amt, txn_type):
+        """Sync a savings/other passbook column with the transactions table.
+
+        Finds existing transaction on this date for this member+type.
+        If amount differs: reverse old, create new.
+        If amount is 0 and old exists: reverse old.
+        """
+        from engines.transaction_engine import (
+            record_savings, record_other_payment, reverse_transaction,
+        )
+        member_id = self.selected_member_db_id
+        conn = get_connection()
+
+        # Find existing transaction on this date for this type
+        existing = conn.execute(
+            """SELECT t.transaction_id, t.amount
+               FROM transactions t
+               WHERE t.member_id = ? AND t.transaction_type = ?
+                 AND t.date = ? AND t.status = 'Posted'
+               LIMIT 1""",
+            (member_id, txn_type, date_str),
+        ).fetchone()
+
+        old_amt = existing["amount"] if existing else 0
+        if abs(old_amt - new_amt) < 0.01:
+            return  # No change
+
+        # Reverse old transaction if it exists
+        if existing:
+            try:
+                reverse_transaction(
+                    existing["transaction_id"],
+                    entered_by=self.current_user.get("id"),
+                )
+            except Exception:
+                pass
+
+        # Create new transaction if amount > 0
+        if new_amt > 0:
+            if txn_type == "Savings":
+                record_savings(
+                    member_id, new_amt,
+                    entered_by=self.current_user.get("id"),
+                    date=date_str, allow_backdate=True,
+                )
+            elif txn_type == "Other":
+                record_other_payment(
+                    member_id, new_amt,
+                    entered_by=self.current_user.get("id"),
+                    date=date_str, allow_backdate=True,
+                )
 
     def _reverse_transaction_dialog(self):
         if not self.selected_member_db_id:
