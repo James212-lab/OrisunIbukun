@@ -487,8 +487,11 @@ def reverse_transaction(transaction_id: str, reason: str, reversed_by: int,
                                status = CASE
                                    WHEN MAX(0, amount_paid - ?) < 0.01 THEN 'Owed'
                                    ELSE 'Partial' END
-                           WHERE member_id = ? AND meeting_id = ? AND status != 'Paid'
-                           ORDER BY created_at ASC LIMIT 1""",
+                           WHERE id = (
+                               SELECT id FROM absentism_fines
+                               WHERE member_id = ? AND meeting_id = ? AND status != 'Paid'
+                               ORDER BY created_at ASC LIMIT 1
+                           )""",
                         (app["amount_applied"], app["amount_applied"],
                          charge["member_id"], charge["meeting_id"]),
                     )

@@ -312,10 +312,10 @@ class SavingsForm(tk.Frame):
             self.tree.insert("", "end", iid=str(row["id"]),
                              values=(row["member_id"], row["full_name"],
                                      format_currency(row["savings"]),
-                                     format_currency(row["active_loan"]),
-                                     format_currency(row["outstanding"]),
-                                     format_currency(row["minutes_owed"]),
-                                     format_currency(row["fines_owed"])))
+                                     format_currency(row["active_loan"]) if row["active_loan"] else "--",
+                                     format_currency(row["outstanding"]) if row["outstanding"] else "--",
+                                     format_currency(row["minutes_owed"]) if row["minutes_owed"] else "--",
+                                     format_currency(row["fines_owed"]) if row["fines_owed"] else "--"))
 
         self._pagination.set_total_items(total)
         info = self._pagination.get_page_info()
@@ -486,8 +486,8 @@ class SavingsForm(tk.Frame):
 
         summary = get_member_financial_summary(db_id)
         self.info_labels["savings"].config(text=format_currency(summary["total_savings"]))
-        self.info_labels["active_loan"].config(text=format_currency(summary["active_loan"]))
-        self.info_labels["outstanding"].config(text=format_currency(summary["outstanding"]))
+        self.info_labels["active_loan"].config(text=format_currency(summary["active_loan"]) if summary["active_loan"] else "--")
+        self.info_labels["outstanding"].config(text=format_currency(summary["outstanding"]) if summary["outstanding"] else "--")
 
         for item in self.book_tree.get_children():
             self.book_tree.delete(item)
@@ -525,15 +525,15 @@ class SavingsForm(tk.Frame):
             ])
             self.book_tree.insert("", "end", values=vals)
 
-        self.info_labels["minutes_billed"].config(text=format_currency(summary["minutes_billed"]))
-        self.info_labels["minutes_paid"].config(text=format_currency(summary["minutes_paid"]))
-        self.info_labels["minutes_owed"].config(text=format_currency(summary["minutes_owed"]))
-        self.info_labels["absentism_billed"].config(text=format_currency(summary["absentism_billed"]))
-        self.info_labels["absentism_paid"].config(text=format_currency(summary["absentism_paid"]))
-        self.info_labels["absentism_owed"].config(text=format_currency(summary["absentism_owed"]))
-        self.info_labels["fines_billed"].config(text=format_currency(summary["fines_billed"]))
-        self.info_labels["fines_paid"].config(text=format_currency(summary["fines_paid"]))
-        self.info_labels["fines_owed"].config(text=format_currency(summary["fines_owed"]))
+        self.info_labels["minutes_billed"].config(text=format_currency(summary["minutes_billed"]) if summary["minutes_billed"] else "--")
+        self.info_labels["minutes_paid"].config(text=format_currency(summary["minutes_paid"]) if summary["minutes_paid"] else "--")
+        self.info_labels["minutes_owed"].config(text=format_currency(summary["minutes_owed"]) if summary["minutes_owed"] else "--")
+        self.info_labels["absentism_billed"].config(text=format_currency(summary["absentism_billed"]) if summary["absentism_billed"] else "--")
+        self.info_labels["absentism_paid"].config(text=format_currency(summary["absentism_paid"]) if summary["absentism_paid"] else "--")
+        self.info_labels["absentism_owed"].config(text=format_currency(summary["absentism_owed"]) if summary["absentism_owed"] else "--")
+        self.info_labels["fines_billed"].config(text=format_currency(summary["fines_billed"]) if summary["fines_billed"] else "--")
+        self.info_labels["fines_paid"].config(text=format_currency(summary["fines_paid"]) if summary["fines_paid"] else "--")
+        self.info_labels["fines_owed"].config(text=format_currency(summary["fines_owed"]) if summary["fines_owed"] else "--")
 
         if rows:
             totals_vals = ["TOTALS",
