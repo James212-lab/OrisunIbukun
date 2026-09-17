@@ -48,7 +48,7 @@ def verify_pin(pin: str, stored: str) -> bool:
 
 
 def format_currency(amount: float) -> str:
-    currency = "₦"
+    currency = "N"
     if amount < 0:
         return f"-{currency}{abs(amount):,.0f}"
     return f"{currency}{amount:,.0f}"

@@ -539,7 +539,7 @@ def get_member_financial_summary(member_db_id: int) -> dict:
 
     cur = conn.execute(
         """SELECT COALESCE(SUM(principal_amount), 0) as total,
-                  COALESCE(SUM(outstanding_principal), 0) as outstanding
+                  COALESCE(SUM(outstanding_principal + outstanding_interest), 0) as outstanding
            FROM loans WHERE member_id = ? AND status IN ('Disbursed', 'Active', 'Overdue')""",
         (member_db_id,),
     )

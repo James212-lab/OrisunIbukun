@@ -10,6 +10,11 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Suppress console window when running as frozen .exe
+if getattr(sys, "frozen", False):
+    sys.stdout = open(os.devnull, "w")
+    sys.stderr = sys.stdout
+
 LOG_DIR = Path(os.environ.get("APPDATA", os.path.expanduser("~"))) / "OrisunIbukun" / "logs"
 LOG_PATH = LOG_DIR / "app.log"
 
